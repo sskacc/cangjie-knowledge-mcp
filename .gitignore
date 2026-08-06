@@ -1,0 +1,18 @@
+# build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# knowledge base output
+data/
+!data/.gitkeep
+
+# python
+.venv/
+venv/
+
+# misc
+.DS_Store
+*.log

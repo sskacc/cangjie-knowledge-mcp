@@ -1,0 +1,37 @@
+# cangjie-knowledge-mcp configuration
+
+# Where the Cangjie documentation corpus lives.
+# Relative paths are resolved against the project root.
+corpus:
+  # Local CangjieCorpus clone (https://gitcode.com/Cangjie/cangjie_runtime docs + manual)
+  cangjie_corpus: "D:/x2cangjie/x2cangjie/misc/CangjieCorpus"
+  # j2cjlib: hand-written Java-compatible shim implementations in Cangjie
+  j2cjlib: "D:/x2cangjie/x2cangjie/misc/j2cjlib"
+  # Terminology map (Java -> Cangjie terms) used for BM25 query construction
+  java_terms: "D:/x2cangjie/x2cangjie/configs/java_cangjie_terms.yaml"
+  # Optional: official stdlib API docs cloned from gitcode (auth-gated; see README)
+  gitcode_api_docs: ""   # e.g. "D:/data/cangjie_runtime/stdlib/doc"
+
+# Where the built knowledge base is written (relative to project root)
+output:
+  data_dir: "data"
+
+# Indexing
+index:
+  # BM25 weights for the different record fields
+  field_weights:
+    name: 4.0
+    module: 2.0
+    signature: 3.0
+    description: 1.0
+    tags: 1.5
+  top_k: 10
+  # Minimal BM25 score to return a result (filters noise)
+  min_score: 0.01
+
+# LLM example writer (optional; used only when --write-examples is passed)
+llm:
+  base_url: ""            # defaults to OPENAI_BASE_URL env
+  api_key: ""             # defaults to OPENAI_API_KEY env
+  model: ""               # defaults to OPENAI_MODEL env
+  max_new_examples: 20
