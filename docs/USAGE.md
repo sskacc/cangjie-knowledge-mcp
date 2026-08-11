@@ -147,24 +147,94 @@ Level 3  function 整段函数         "public void copyFile(...) {...}"
 
 ### 典型使用场景
 
-**场景 A:翻译一个 Java 片段之前**
+**场景 A:翻译一个 Java 片段之前(以 `map.put(key, value)` 为例)**
+
+下面逐步拆解"翻译前应该查什么、为什么这么查、结果怎么读"。所有工具都不改
+x2cangjie 的代码,agent 直接调用 MCP 拿到检索结果,再拼进自己的翻译 prompt。
 
 ```
-# 0.(推荐)直接把整个片段丢给分层检索
+# ── 第 0 步(推荐):直接把整个片段丢给分层检索 ─────────────────────
 resolve_java_code("map.put(key, value);")
-#    → statement 层命中 replace(K,V)/add(K,V)(Cangjie 中 put 的正确对应)
-
-# 1. 先确认 Java 类型在 Cangjie 里对应什么
-java_to_cangjie("java.util.HashMap")
-#    → 没有直接 shim,则 search_api("HashMap")
-
-# 2. 查目标类的实际方法名(避免把 Java 的 put 直接搬过来)
-get_class_members("HashMap")
-#    → add(K,V) / replace(K,V) / get(K) ... (Cangjie 没有 put!)
-
-# 3. 找官方示例做参考
-find_examples("HashMap")
 ```
+
+这一步在内部做了三件事(详见上文"分层检索怎么工作"):
+
+1. `nl_generator` 把这段代码在三个粒度上各生成一条中英双语 NL 描述:
+   - api(最细):      `map.put(key, value)` → "insert a key-value pair into a map"
+   - statement(中间):整条语句 → 同样的功能意图
+   - function(最粗):整段函数 → 更高层的功能
+2. 三个粒度的 NL 分别送进 BM25 检索 API 文档 + 示例
+3. 每层按"查询词与顶部结果的 token 重叠度"打分,分最高者为 `best_level`
+
+**返回结构**(关键字段):
+
+```jsonc
+{
+  "java_code": "map.put(key, value);",
+  "best_level": "statement",          // ← 优先看这个:哪一层在仓颉文档里找到了对应物
+  "levels": {
+    "api":      {"nl": {...}, "query": "...", "score": 0.2, "apis": [...], "examples": [...]},
+    "statement":{"nl": {...}, "query": "...", "score": 0.5, "apis": [...], "examples": [...]},
+    "function": {"nl": {...}, "query": "...", "score": 0.3, "apis": [...], "examples": [...]}
+  },
+  "best_hit": { /* best_level 里的第一个 API:名称/签名/模块/描述/示例 */ }
+}
+```
+
+**怎么读**:`best_level` 就是"这段 NL 在仓颉文档里确实有对应物"的层级。从它开始用:
+- 配置了 LLM 时(推荐),`map.put` 会在 statement 层命中 `replace(K,V)` / `add(K,V)`
+  (std.collection)——因为 NL 描述的是**功能意图**("insert key-value pair"),
+  而不是方法名,所以能跨过 "put → add" 的名字鸿沟
+- 没配 LLM 时走启发式,`put on map` 这样的低质量 NL 可能命中无关 API——这时
+  `best_level` 会落在 api 层、`best_hit` 不可信,**请优先配置 LLM**(见上文 LLM 配置节)
+
+> ⚠️ 关键认知:**分层检索解决"方法名不同但功能相同"**(put→replace);
+> 它**不保证**找到的就是目标类的方法。所以拿到候选后,还要用下面的步骤
+> 确认类型和方法,防止把 `PrettyPrinter.put` 当成 `HashMap.put`。
+
+```
+# ── 第 1 步:确认 Java 类型在 Cangjie 里对应什么 ─────────────────────
+java_to_cangjie("java.util.HashMap")
+#    → 命中:直接返回映射(如 java.util.concurrent.TimeUnit → j2cjlib.mappings.sync.TimeUnit)
+#    → 未命中:返回空数组。当前内置映射表只有 93 条(j2cjlib shim + 术语表),
+#      不含 HashMap 这类常见类型 —— 此时退到 search_api 按名检索
+search_api("HashMap")
+#    → 返回 HashMap 类的签名/模块/描述/官方示例
+```
+
+**为什么先查类型**:Cangjie 的 `HashMap` 在 `std.collection`,且它的方法名和
+Java 完全不同(没有 `put`)。先锁定"这个 Java 类型在 Cangjie 里叫什么、在哪个
+模块",后面查方法才有正确的作用域。
+
+```
+# ── 第 2 步:查目标类的实际方法名(避免把 Java 的 put 直接搬过来) ─────
+get_class_members("HashMap")
+#    → member_count: 27
+#      add(K, V)              ← Java put 的对应物(Cangjie 用 add 插入)
+#      addIfAbsent(K, V)      ← 相当于 putIfAbsent
+#      replace(K, V)          ← 相当于 put 的"覆盖已有值"语义
+#      get(K) / contains(K) / remove(K) / size / capacity ...
+#      (Cangjie 没有 put!)
+```
+
+**为什么必须看成员**:第 0 步的候选可能来自别的类(同名方法),第 2 步
+用 `class_name` 精确锁定 `HashMap` 自己的成员,从 27 个里挑语义匹配的。
+这一步就是前面讨论过的**两阶段检索**——先锁类型,再在类型内匹配方法,
+匹配空间从全库 3537 条缩小到 27 个成员。
+
+```
+# ── 第 3 步:找官方示例做参考 ──────────────────────────────────────────
+find_examples("HashMap")
+#    → 返回官方 sample 代码(如 HashMap 的增删查示例),可直接参考/改写
+```
+
+**三步合起来得到什么**:`HashMap` 类型在 `std.collection`、插入用 `add(K,V)`
+而非 `put`、官方示例长什么样。把这些拼进翻译 prompt,LLM 就能写出正确的
+Cangjie 代码,而不是把 Java 语法直接搬过去。
+
+> 小贴士:第 0 步是"广度优先"的快速扫描(适合不熟悉的片段);
+> 第 1–3 步是"精确确认"(适合需要确定性的关键调用)。可以先 0 后 1–3,
+> 也可以跳过 0 直接 1–3。
 
 **场景 B:翻译失败后的错误修复**
 
