@@ -277,15 +277,19 @@ class McpServer:
                 "nl": lvl["nl"],
                 "query": lvl["query"],
                 "score": round(lvl["score"], 3),
+                "type_matched": lvl.get("type_matched", 0),
                 "apis": [_api_dict(r) for r in lvl["apis"]],
                 "examples": [_example_dict(e) for e in lvl["examples"]],
             }
 
         return {
             "java_code": code,
+            "java_types": res["java_types"],
+            "type_candidates": res["type_candidates"],
             "best_level": res["best_level"],
             "levels": {lvl: _lvl_dict(res["levels"][lvl]) for lvl in ("api", "statement", "function")},
             "best_hit": _api_dict(res["best_hit"]) if res["best_hit"] else None,
+            "suggested": _suggested_dict(res["suggested"]) if res["suggested"] else None,
         }
 
     def _describe_java_code(self, a: Dict[str, Any]) -> Any:
@@ -374,6 +378,18 @@ def _example_dict(e) -> Dict[str, Any]:
         "description": e.description[:200],
         "source": e.source,
         "generated": e.generated,
+    }
+
+
+def _suggested_dict(s) -> Dict[str, Any]:
+    return {
+        "cangjie_type": s["cangjie_type"],
+        "module": s["module"],
+        "java_type": s["java_type"],
+        "confidence": s["confidence"],
+        "source": s["source"],
+        "members": [_api_dict(r) for r in s["members"]],
+        "examples": [_example_dict(e) for e in s["examples"]],
     }
 
 

@@ -127,114 +127,106 @@ python tests/mcp_e2e.py
 
 ### 分层检索(`resolve_java_code`)怎么工作
 
-渐进式披露思路:Java 代码按粒度拆三层,每层生成 NL 描述去仓颉文档检索。
+**两阶段检索 = 类型锁定(Stage 1)+ 分层 NL 检索(Stage 2)**。渐进式披露思路:
+Java 代码按粒度拆三层,每层生成 NL 描述去仓颉文档检索;但先做类型锁定,
+把检索范围从全库缩小到正确的类,再用 NL 找方法——这样"方法名不同但功能相同"
+的匹配(put→replace)既能找到,又不会找错类。
+
+**Stage 1 类型锁定**(把 3537 条候选缩小到几个类):
+
+```
+输入: HashMap<String,Integer> map = new HashMap<>(); map.put(k, v);
+  → java_types 提取器抓出: HashMap, String, Integer
+  → java_to_cangjie 查映射表: 3257 条(含 x2cangjie 类型翻译产物)
+        HashMap  → HashMap (std.collection)
+        BufferedReader → StringReader (std.io)   ← 类型翻译产物的功劳
+  → 没有映射的再 search_api 相似度检索
+  → 输出 type_candidates: [HashMap@std.collection, ...]
+```
+
+**Stage 2 分层 NL 检索 + 交叉验证**:
 
 ```
 Level 1  api      单个 API 调用    "map.put(k, v)"
-        → NL "insert a key-value pair into a map"
-        → 检索(细粒度,可能无 1:1 对应)
+        → NL "insert a key-value pair into a map" → 检索
 Level 2  statement 语句/代码段     "while ((len = in.read(buf)) > 0) {...}"
-        → NL "copy stream data chunk by chunk until EOF"
-        → 检索(对应一个或几个 Cangjie API)
+        → NL "copy stream data chunk by chunk until EOF" → 检索
 Level 3  function 整段函数         "public void copyFile(...) {...}"
-        → NL "copy a file"
-        → 检索(对应整个功能模块)
+        → NL "copy a file" → 检索
 ```
 
-- NL 描述由 LLM 生成(配置了 key 时)或启发式(驼峰拆分 + 术语映射)兜底
-- 每层独立检索,按"查询词与顶部结果的 token 重叠度"打分,分最高者为 `best_level`
-- **用法**:从 `best_level` 开始取结果;细粒度没命中就退到粗粒度(渐进披露)
+- 每层独立检索,按"查询词与顶部结果的 token 重叠度"打分
+- **交叉验证**:命中结果如果属于 Stage 1 锁定的类型(`parent` 匹配),额外加分
+  (`type_matched` 字段)——防止把 `PrettyPrinter.put` 当成 `HashMap.put`
+- 分数最高的层为 `best_level`;细粒度没命中就退到粗粒度(渐进披露)
+- 最后从锁定类型里取成员 + 示例,打包成 `suggested` 直接可用
 
 ### 典型使用场景
 
 **场景 A:翻译一个 Java 片段之前(以 `map.put(key, value)` 为例)**
 
-下面逐步拆解"翻译前应该查什么、为什么这么查、结果怎么读"。所有工具都不改
-x2cangjie 的代码,agent 直接调用 MCP 拿到检索结果,再拼进自己的翻译 prompt。
+现在**一步就够**:`resolve_java_code` 内部已经完成了类型锁定 + 方法匹配 +
+示例收集,不再需要手动拼 4 个工具。
 
 ```
-# ── 第 0 步(推荐):直接把整个片段丢给分层检索 ─────────────────────
-resolve_java_code("map.put(key, value);")
+resolve_java_code("HashMap<String,Integer> map = new HashMap<>(); map.put(k, v);")
 ```
-
-这一步在内部做了三件事(详见上文"分层检索怎么工作"):
-
-1. `nl_generator` 把这段代码在三个粒度上各生成一条中英双语 NL 描述:
-   - api(最细):      `map.put(key, value)` → "insert a key-value pair into a map"
-   - statement(中间):整条语句 → 同样的功能意图
-   - function(最粗):整段函数 → 更高层的功能
-2. 三个粒度的 NL 分别送进 BM25 检索 API 文档 + 示例
-3. 每层按"查询词与顶部结果的 token 重叠度"打分,分最高者为 `best_level`
 
 **返回结构**(关键字段):
 
 ```jsonc
 {
-  "java_code": "map.put(key, value);",
-  "best_level": "statement",          // ← 优先看这个:哪一层在仓颉文档里找到了对应物
+  "java_code": "HashMap<String,Integer> map = new HashMap<>(); map.put(k, v);",
+  "java_types": ["HashMap<String,Integer>", "HashMap", "String", "Integer"],  // 提取的 Java 类型
+  "type_candidates": [          // Stage 1:锁定的 Cangjie 类型候选
+    {"cangjie_type": "HashMap", "module": "std.collection", "confidence": "class_search"},
+    ...
+  ],
+  "best_level": "statement",    // Stage 2:命中最好的粒度层
   "levels": {
-    "api":      {"nl": {...}, "query": "...", "score": 0.2, "apis": [...], "examples": [...]},
-    "statement":{"nl": {...}, "query": "...", "score": 0.5, "apis": [...], "examples": [...]},
-    "function": {"nl": {...}, "query": "...", "score": 0.3, "apis": [...], "examples": [...]}
+    "api":      {"query": "...", "score": 0.2, "type_matched": 0, "apis": [...], "examples": [...]},
+    "statement":{"query": "...", "score": 0.5, "type_matched": 1, "apis": [...], "examples": [...]},
+    "function": {"query": "...", "score": 0.4, "type_matched": 1, "apis": [...], "examples": [...]}
   },
-  "best_hit": { /* best_level 里的第一个 API:名称/签名/模块/描述/示例 */ }
+  "suggested": {                // ★ 可直接使用的建议(两阶段合并的结果)
+    "cangjie_type": "HashMap",  //   Cangjie 类型
+    "module": "std.collection", //   在哪个模块
+    "confidence": "class_search",
+    "members": [                //   该类型的方法(含 Java put 的对应)
+      {"name": "add(K, V)", "signature": "public func add(key: K, value: V): ?V"},
+      {"name": "replace(K, V)", "signature": "public func replace(key: K, value: V): ?V"},
+      ...                       //   Cangjie 没有 put!用 add / replace
+    ],
+    "examples": [...]           //   官方示例
+  }
 }
 ```
 
-**怎么读**:`best_level` 就是"这段 NL 在仓颉文档里确实有对应物"的层级。从它开始用:
-- 配置了 LLM 时(推荐),`map.put` 会在 statement 层命中 `replace(K,V)` / `add(K,V)`
-  (std.collection)——因为 NL 描述的是**功能意图**("insert key-value pair"),
-  而不是方法名,所以能跨过 "put → add" 的名字鸿沟
-- 没配 LLM 时走启发式,`put on map` 这样的低质量 NL 可能命中无关 API——这时
-  `best_level` 会落在 api 层、`best_hit` 不可信,**请优先配置 LLM**(见上文 LLM 配置节)
+**怎么读**:
+- **`suggested` 是最重要的字段**——类型、模块、方法、示例一次打包。直接用它
+  拼翻译 prompt:`HashMap` 在 `std.collection`,插入用 `add(K,V)` 而非 `put`。
+- **`best_level`** 告诉你哪个粒度层命中最好(statement/function 通常比 api
+  更可靠,因为 NL 描述的是功能意图)
+- **`type_candidates`** 是 Stage 1 锁定的类型;`confidence` 为 `mapping` 表示
+  来自类型翻译产物(查表命中,最可信),`class_search` 表示相似度检索
+- 没配 LLM 时走启发式 NL,质量较低,但**类型锁定不受影响**——`suggested`
+  依然能给出正确的类型和成员(类型锁定靠映射表,不靠 NL)
 
-> ⚠️ 关键认知:**分层检索解决"方法名不同但功能相同"**(put→replace);
-> 它**不保证**找到的就是目标类的方法。所以拿到候选后,还要用下面的步骤
-> 确认类型和方法,防止把 `PrettyPrinter.put` 当成 `HashMap.put`。
+> ⚠️ 关键认知:分层检索解决"方法名不同但功能相同"(put→replace),
+> 类型锁定保证方法匹配发生在正确的类里。两者合起来就是完整的
+> "Java 方法 → Cangjie 方法"解析链——**一次调用**拿到全部信息。
 
-```
-# ── 第 1 步:确认 Java 类型在 Cangjie 里对应什么 ─────────────────────
-java_to_cangjie("java.util.HashMap")
-#    → 命中:直接返回映射(如 java.util.concurrent.TimeUnit → j2cjlib.mappings.sync.TimeUnit)
-#    → 未命中:返回空数组。当前内置映射表只有 93 条(j2cjlib shim + 术语表),
-#      不含 HashMap 这类常见类型 —— 此时退到 search_api 按名检索
-search_api("HashMap")
-#    → 返回 HashMap 类的签名/模块/描述/官方示例
-```
-
-**为什么先查类型**:Cangjie 的 `HashMap` 在 `std.collection`,且它的方法名和
-Java 完全不同(没有 `put`)。先锁定"这个 Java 类型在 Cangjie 里叫什么、在哪个
-模块",后面查方法才有正确的作用域。
+**如果还想手动确认**(可选):
 
 ```
-# ── 第 2 步:查目标类的实际方法名(避免把 Java 的 put 直接搬过来) ─────
-get_class_members("HashMap")
-#    → member_count: 27
-#      add(K, V)              ← Java put 的对应物(Cangjie 用 add 插入)
-#      addIfAbsent(K, V)      ← 相当于 putIfAbsent
-#      replace(K, V)          ← 相当于 put 的"覆盖已有值"语义
-#      get(K) / contains(K) / remove(K) / size / capacity ...
-#      (Cangjie 没有 put!)
+# 类型锁定内部等效操作
+java_to_cangjie("java.util.HashMap")   # → 有类型翻译产物后:HashMap (std.collection)
+search_api("HashMap")                  # → 相似度检索兜底
+
+# 方法确认(内部已做)
+get_class_members("HashMap")           # → 27 个成员,add/replace/get/...
+find_examples("HashMap")               # → 官方示例
 ```
-
-**为什么必须看成员**:第 0 步的候选可能来自别的类(同名方法),第 2 步
-用 `class_name` 精确锁定 `HashMap` 自己的成员,从 27 个里挑语义匹配的。
-这一步就是前面讨论过的**两阶段检索**——先锁类型,再在类型内匹配方法,
-匹配空间从全库 3537 条缩小到 27 个成员。
-
-```
-# ── 第 3 步:找官方示例做参考 ──────────────────────────────────────────
-find_examples("HashMap")
-#    → 返回官方 sample 代码(如 HashMap 的增删查示例),可直接参考/改写
-```
-
-**三步合起来得到什么**:`HashMap` 类型在 `std.collection`、插入用 `add(K,V)`
-而非 `put`、官方示例长什么样。把这些拼进翻译 prompt,LLM 就能写出正确的
-Cangjie 代码,而不是把 Java 语法直接搬过去。
-
-> 小贴士:第 0 步是"广度优先"的快速扫描(适合不熟悉的片段);
-> 第 1–3 步是"精确确认"(适合需要确定性的关键调用)。可以先 0 后 1–3,
-> 也可以跳过 0 直接 1–3。
 
 **场景 B:翻译失败后的错误修复**
 
@@ -290,11 +282,15 @@ cangjie-knowledge-mcp/
 │
 ├── scripts/                         # 命令行入口
 │   ├── build_kb.py                  # ★ 构建知识库(collect → index → save)
+│   ├── import_type_mappings.py      # ★ 导入 x2cangjie 类型翻译产物 → java_mappings
+│   │                                #   (93 → 3257 条,类型锁定从猜变查表)
 │   └── query_demo.py                # 命令行检索演示(不经过 MCP)
 │
 └── tests/
-    ├── test_kb.py                   # 单元测试(分词/BM25/解析器/检索/MCP 协议)
+    ├── test_kb.py                   # 单元测试(分词/BM25/解析器/类型提取/检索/MCP)
     ├── mcp_e2e.py                   # MCP 端到端测试(模拟客户端完整对话)
+    ├── mcp_layered_e2e.py           # 分层检索端到端测试(启发式,无需 LLM)
+    ├── mcp_layered_llm.py           # 分层检索端到端测试(真实 LLM,需配 key)
     └── test_deepseek_api.py         # 直连 DeepSeek API 连通性测试
 ```
 
@@ -307,10 +303,16 @@ build_kb.py
   ├─► (可选) collector/example_writer.write_examples()  → 补生成示例
   └─► index/searcher.Searcher.build().save()     → data/*.jsonl + *.pkl
 
-mcp_server.py
-  └─► index/searcher.Searcher.load(data_dir)     → 只读 data/
-       └─► index/bm25.BM25Index.load()           → 反序列化 pkl
-       └─► models.KnowledgeBase.from_jsonl()     → 反序列化 JSONL
+import_type_mappings.py
+  └─► 读 x2cangjie data/java/type_resolution/*.json
+      → KnowledgeBase.mappings 追加 3164 条 → Searcher.build().save()
+
+mcp_server.py (tools/call: resolve_java_code)
+  └─► java_types.extract_types()                 → 提取 Java 类型
+  └─► layered_search.layered_search()            → 两阶段检索
+       ├─ Stage 1: 类型锁定 (java_to_cangjie + search_api)
+       ├─ Stage 2: 分层 NL 检索 + 交叉验证 (type_matched)
+       └─ 输出 suggested {cangjie_type, module, members, examples}
 ```
 
 ---
@@ -323,7 +325,7 @@ mcp_server.py
 |---|---|---|---|---|
 | `apis.jsonl` | 5.1 MB | **3537 条 API 记录**,每行一个 JSON:`name / kind / module / library / signature / description / params / returns / exceptions / parent / source / examples / tags` | build_kb | Searcher.load → get_api_details / get_class_members / search_api |
 | `examples.jsonl` | 269 KB | **228 条示例**,每行一个 JSON:`title / code / module / library / source / description / tags / generated`。其中 **4 条 `generated=true`**(LLM 补写的) | build_kb (+example_writer) | Searcher.load → find_examples |
-| `java_mappings.jsonl` | 15 KB | **93 条 Java→Cangjie 映射**,每行:`java_symbol / cangjie_symbol / source / notes / library` | build_kb(j2cj_parser) | Searcher.load → java_to_cangjie + 查询扩展 |
+| `java_mappings.jsonl` | ~600 KB | **3257 条 Java→Cangjie 映射**,每行:`java_symbol / cangjie_symbol / source / notes / library`。其中 93 条来自 j2cjlib+术语表,3164 条来自 x2cangjie 类型翻译产物(`library=type_resolution`) | build_kb(j2cj_parser) + import_type_mappings | Searcher.load → java_to_cangjie + 类型锁定 + 查询扩展 |
 | `modules.json` | 5 KB | **48 个模块的统计**:每个模块的 `library / module_dir / apis / examples` 数量 | build_kb | list_modules 工具 |
 | `bm25_apis.pkl` | 1.3 MB | API 记录的 **BM25 索引**(pickle):词频、文档长、IDF 等 | build_kb(index/bm25) | search_api 打分 |
 | `bm25_examples.pkl` | 147 KB | 示例的 **BM25 索引**(pickle) | build_kb | find_examples 打分 |

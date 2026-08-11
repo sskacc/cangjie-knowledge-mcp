@@ -21,6 +21,10 @@ Cangjie 标准库中的**来源(哪个库、哪个模块)**、**完整签名**�
 
 **把 Java 代码按粒度分层,每层生成自然语言(NL)描述,分别去
 仓颉文档检索**。细粒度没有一一对应时,自动上升到粗粒度找等价功能。
+在此基础上叠加**两阶段检索**(类型锁定 → 方法匹配),让结果从"候选列表"
+变成"一个可直接使用的建议"。
+
+### 分层检索(三层 NL)
 
 ```
 Level 1  api      最细粒度: 单个 API 调用      "map.put(k, v)"
@@ -36,25 +40,50 @@ Level 3  function 最粗粒度: 整段函数            "public void copyFile(..
                   → 检索: 对应 Cangjie 的整个功能模块
 ```
 
+### 两阶段检索(类型锁定 → 方法匹配)
+
+`resolve_java_code` 的完整流程:
+
+```
+输入: HashMap<String,Integer> map = new HashMap<>(); map.put(k, v);
+│
+├─ Stage 1 类型锁定(把 3537 条候选缩小到几个类)
+│    extract_types() 提取 Java 类型(HashMap, String, Integer)
+│    → java_to_cangjie 查映射表(3257 条,含 x2cangjie 类型翻译产物)
+│    → search_api 相似度检索 → 候选 Cangjie 类型
+│    ★ 关键:类型翻译产物让"Java 类型 → Cangjie 类型"从猜变成查表
+│      (java.io.BufferedReader → StringReader 这类映射直接命中)
+│
+├─ Stage 2 分层 NL 检索 + 交叉验证
+│    三级 NL 分别检索,但每个命中若属于锁定类型则加分(type_matched)
+│    → 防止把 PrettyPrinter.put 当成 HashMap.put
+│
+└─ 输出 suggested(可直接使用的建议)
+     {cangjie_type: HashMap, module: std.collection,
+      members: [add(K,V), replace(K,V), ...], examples: [...]}
+```
+
 **工作机制**:
 
 1. `describe_java_code` 把 Java 代码在三级粒度上各生成一条中英双语 NL 描述
    (配置了 LLM 时用 LLM 生成,质量最好;否则用启发式:驼峰拆分 + 术语映射)
-2. `resolve_java_code` 把每一级的 NL 描述分别送进 BM25 检索(API 文档 + 示例)
-3. 每层算出命中分数(查询词与顶部结果的重叠度),**分数最高的层即为 `best_level`**
-   ——分数高说明这段 NL 在仓颉文档里确实有对应物
-4. 调用方从 `best_level` 开始使用,细粒度不匹配就退到粗粒度
+2. `resolve_java_code` 先做类型锁定(提取 Java 类型 → 查映射表/相似度检索),
+   再把每一级的 NL 描述分别送进 BM25 检索(API 文档 + 示例)
+3. 每层算出命中分数(查询词与顶部结果的重叠度),命中属于锁定类型时加分;
+   **分数最高的层即为 `best_level`**
+4. 返回 `suggested`:从锁定类型里取成员和示例,一次调用拿到完整建议
 
 **实测效果**(deepseek-v4-flash 生成 NL):
 
-| Java 代码 | best_level | 命中 |
+| Java 代码 | best_level | suggested |
 |---|---|---|
-| `map.put(key, value)` | statement | `replace(K,V)` / `add(K,V)`(std.collection)——Cangjie 中 put 的正确对应 |
-| `while ((len = in.read(buf)) > 0) { out.write(...) }` | statement | `std.io.copy(from: InputStream, to!: OutputStream)` |
-| `String line = reader.readLine()` | statement | `std.io` 读取类 API |
+| `map.put(key, value)` | statement | `HashMap @ std.collection`,成员 `add(K,V)`/`replace(K,V)` |
+| `reader.readLine()` | statement | `StringReader @ std.io`,成员 `read`/`readToEnd`/`readUntil`/`lines` |
+| `while ((len = in.read(buf)) > 0) {...}` | api | `InputStream @ std.io`,成员 `read(Array<Byte>)` |
 
 分层检索让"方法名不同但功能相同"的匹配(put→replace、readLine→readln)从碰运气
-变成可检索——因为 NL 描述描述的是**功能意图**而不是方法名。
+变成可检索——因为 NL 描述描述的是**功能意图**而不是方法名;类型锁定又保证了
+方法匹配发生在正确的类里,两阶段合起来就是完整的"Java 方法 → Cangjie 方法"解析链。
 
 ## 架构
 
@@ -64,8 +93,9 @@ cangjie-knowledge-mcp/
 ├── src/cjkb/
 │   ├── models.py                # ApiRecord / ExampleRecord / JavaMapping 数据模型
 │   ├── config.py                # 配置加载(支持环境变量覆盖)
+│   ├── java_types.py            # Java 类型提取器(声明/泛型/调用接收者/强转)
 │   ├── nl_generator.py          # Java 代码 → 中英双语 NL 描述(API/语句/函数三级)
-│   ├── layered_search.py        # 渐进式披露分层检索(best_level 判定)
+│   ├── layered_search.py        # 两阶段检索:类型锁定 + 分层 NL + 交叉验证
 │   ├── collector/
 │   │   ├── corpus_parser.py     # 解析 CangjieCorpus 官方文档 → API/示例记录
 │   │   ├── j2cj_parser.py       # 解析 j2cjlib shim + 术语表 → Java→Cangjie 映射
@@ -76,6 +106,7 @@ cangjie-knowledge-mcp/
 │   └── mcp_server.py            # MCP stdio 服务器(零第三方依赖)
 ├── scripts/
 │   ├── build_kb.py              # 收集 + 建索引 → data/
+│   ├── import_type_mappings.py  # 导入 x2cangjie 类型翻译产物(3257 条映射)
 │   └── query_demo.py            # 命令行检索演示
 ├── tests/                       # 单元测试 + MCP 端到端测试
 └── data/                        # 构建产物(知识库, gitignore)
@@ -92,8 +123,10 @@ CangjieCorpus(官方文档)
 collector/corpus_parser.py ──┐
                              ├──> KnowledgeBase(JSONL) ──> BM25 索引 ──> MCP server
 j2cjlib shim + 术语表 ────────┘         │                          (stdio, 9 个工具)
-                                        │
-java 代码 → nl_generator(三级 NL) → layered_search(渐进披露) ──┘
+x2cangjie 类型翻译产物 ─────────────────┘
+  (import_type_mappings.py, 3257 条映射)  │
+                                         │
+java 代码 → java_types(提取) → layered_search(类型锁定+渐进披露) ──┘
 ```
 
 ### 数据来源(知识库的内容来自哪里)
@@ -103,6 +136,7 @@ java 代码 → nl_generator(三级 NL) → layered_search(渐进披露) ──�
 | **CangjieCorpus** | 官方 stdlib 文档:`std.*` 37 个模块 + `stdx.*` 扩展库,含 API 签名、功能说明、官方示例 | `misc/CangjieCorpus`(即 [gitcode.com/Cangjie/cangjie_runtime](https://gitcode.com/Cangjie) 文档的本地镜像) |
 | **j2cjlib** | 手写的 Java 兼容 shim 类(`J2CjThread`、`J2CjByteArrayInputStream`、`TimeUnit`…),直接给出 Java 类 → Cangjie 类的对应 | `misc/j2cjlib` |
 | **java_cangjie_terms.yaml** | Java 术语 → Cangjie 术语词汇表,用于查询扩展(搜 "Thread" 也能命中含"线程"的文档) | x2cangjie `configs/` |
+| **x2cangjie 类型翻译产物** | `translate_type_rag.py` 产出的 **3257 条** Java→Cangjie 类型映射(含 reasoning),让类型锁定从"猜"变"查表" | x2cangjie `data/java/type_resolution/`,用 `scripts/import_type_mappings.py` 导入 |
 
 ### 检索原理
 
@@ -133,6 +167,10 @@ pip install -r requirements.txt
 
 # 2. 构建知识库(默认读 config.yaml 中的语料路径)
 python scripts/build_kb.py
+
+# 2.5 (推荐)导入 x2cangjie 类型翻译产物,让类型锁定从"猜"变"查表"
+python scripts/import_type_mappings.py \
+  --type-resolution D:/x2cangjie/x2cangjie/data/java/type_resolution
 
 # 3. 命令行试一下
 python scripts/query_demo.py "HashMap put key value"
