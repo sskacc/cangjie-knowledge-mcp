@@ -13,10 +13,21 @@ env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "src")
 env["CJKB_DATA_DIR"] = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data"))
 
 proc = subprocess.Popen(
-    [PY, server_script, "--data-dir", env["CJKB_DATA_DIR"]],
+    # -u: unbuffered python so the server flushes each JSON line immediately;
+    #     without it, stdout pipe buffering can deadlock the test on some OSes.
+    [PY, "-u", server_script, "--data-dir", env["CJKB_DATA_DIR"]],
     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    text=True, env=env,
+    text=True, bufsize=1, env=env,
 )
+
+# drain stderr in a background thread so the ready line never blocks the pipe
+import threading as _threading
+
+def _drain_stderr():
+    for _line in proc.stderr:
+        pass
+
+_threading.Thread(target=_drain_stderr, daemon=True).start()
 
 
 def rpc(msg):
@@ -35,7 +46,7 @@ print("initialize:", resp["result"]["serverInfo"])
 resp = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
 tools = [t["name"] for t in resp["result"]["tools"]]
 print("tools:", tools)
-assert len(tools) == 7, tools
+assert len(tools) == 9, tools
 
 # 3. tools/call search_api
 resp = rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",

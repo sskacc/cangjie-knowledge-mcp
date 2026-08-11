@@ -12,6 +12,8 @@ Tools exposed:
   - java_to_cangjie     Java symbol -> Cangjie equivalent
   - error_fix_hint      compile-error text -> relevant APIs/examples
   - list_modules        available stdlib/stdx modules
+  - resolve_java_code   progressive-disclosure layered retrieval (API/statement/function NL)
+  - describe_java_code  NL description of Java code without searching
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from cjkb.config import load_config
 from cjkb.index.searcher import Searcher
+from cjkb.layered_search import layered_search
+from cjkb.nl_generator import generate_nl, detect_level
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -124,6 +128,44 @@ TOOLS: List[Dict[str, Any]] = [
                        "(std.* and stdx.*) with API/example counts.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "resolve_java_code",
+        "description": "PROGRESSIVE-DISCLOSURE layered retrieval. "
+                       "Given a Java code fragment, generate natural-language "
+                       "descriptions at three granularities -- API call (finest, "
+                       "may have no 1:1 Cangjie match), statement/code segment "
+                       "(medium, maps to one or several Cangjie APIs), whole "
+                       "function (coarsest, maps to a whole feature) -- and search "
+                       "the Cangjie knowledge base at each layer. Use when "
+                       "translating a Java fragment: start from `best_level` and "
+                       "fall back to coarser levels when the fine-grained search "
+                       "finds nothing.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "java_code": {"type": "string",
+                              "description": "Java code fragment: a single method call, a statement, or a whole method body"},
+                "module": {"type": "string", "description": "optional module filter, e.g. std.io"},
+                "top_k": {"type": "integer", "description": "results per level (default 5)"},
+            },
+            "required": ["java_code"],
+        },
+    },
+    {
+        "name": "describe_java_code",
+        "description": "Generate natural-language descriptions (English + Chinese) "
+                       "of a Java code fragment at API/statement/function "
+                       "granularity, without searching. Useful when you want the "
+                       "NL description itself (e.g. to build a prompt or explain "
+                       "code) rather than retrieval results.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "java_code": {"type": "string", "description": "Java code fragment"},
+            },
+            "required": ["java_code"],
+        },
+    },
 ]
 
 
@@ -138,8 +180,10 @@ class MCPError(Exception):
 
 
 class McpServer:
-    def __init__(self, searcher: Searcher) -> None:
+    def __init__(self, searcher: Searcher, cfg: Optional[Dict[str, Any]] = None) -> None:
         self.searcher = searcher
+        self.cfg = cfg or {}
+        self.llm_cfg = (cfg or {}).get("llm", {})
 
     # ---- tool implementations ------------------------------------------
     def _run_tool(self, name: str, args: Dict[str, Any]) -> Any:
@@ -151,6 +195,8 @@ class McpServer:
             "java_to_cangjie": self._java_to_cangjie,
             "error_fix_hint": self._error_fix_hint,
             "list_modules": self._list_modules,
+            "resolve_java_code": self._resolve_java_code,
+            "describe_java_code": self._describe_java_code,
         }
         if name not in handlers:
             raise MCPError(-32601, f"unknown tool: {name}")
@@ -217,6 +263,40 @@ class McpServer:
     def _list_modules(self, _a: Dict[str, Any]) -> Any:
         return {"modules": [{"module": m, **_mod_counts(m, self.searcher.kb.modules)}
                             for m in self.searcher.list_modules()]}
+
+    def _resolve_java_code(self, a: Dict[str, Any]) -> Any:
+        code = a.get("java_code", "")
+        module = a.get("module")
+        top_k = a.get("top_k") or 5
+        if not code:
+            raise MCPError(-32602, "java_code is required")
+        res = layered_search(self.searcher, code, self.llm_cfg, module=module, top_k=top_k)
+
+        def _lvl_dict(lvl: Dict) -> Dict:
+            return {
+                "nl": lvl["nl"],
+                "query": lvl["query"],
+                "score": round(lvl["score"], 3),
+                "apis": [_api_dict(r) for r in lvl["apis"]],
+                "examples": [_example_dict(e) for e in lvl["examples"]],
+            }
+
+        return {
+            "java_code": code,
+            "best_level": res["best_level"],
+            "levels": {lvl: _lvl_dict(res["levels"][lvl]) for lvl in ("api", "statement", "function")},
+            "best_hit": _api_dict(res["best_hit"]) if res["best_hit"] else None,
+        }
+
+    def _describe_java_code(self, a: Dict[str, Any]) -> Any:
+        code = a.get("java_code", "")
+        if not code:
+            raise MCPError(-32602, "java_code is required")
+        from cjkb.nl_generator import generate_layered
+        nls = generate_layered(code, self.llm_cfg)
+        return {"java_code": code,
+                "detected_level": detect_level(code),
+                "nl": nls}
 
     # ---- protocol --------------------------------------------------------
     def handle_message(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -342,7 +422,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     searcher = Searcher.load(data_dir, cfg)
-    server = McpServer(searcher)
+    server = McpServer(searcher, cfg)
     sys.stderr.write(f"[cjkb] MCP server ready ({server.searcher.kb.stats()})\n")
 
     for line in sys.stdin:

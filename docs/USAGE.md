@@ -48,7 +48,7 @@
     │  2. notifications/initialized      │
     ├───────────────────────────────────►│
     │  3. tools/list                     │
-    ├───────────────────────────────────►│  返回 7 个工具的定义
+    ├───────────────────────────────────►│  返回 9 个工具的定义
     │  4. tools/call {search_api, ...}   │
     ├───────────────────────────────────►│  执行检索,返回 JSON 结果
     │◄───────────────────────────────────┤
@@ -76,7 +76,7 @@
 }
 ```
 
-注册后 agent 就能直接调用 7 个工具。可以在对话中直接问:
+注册后 agent 就能直接调用 9 个工具。可以在对话中直接问:
 "用 search_api 查一下 Cangjie 里 HashMap 怎么插入键值对"。
 
 ### 2.3 注册到 Claude Desktop
@@ -111,7 +111,7 @@ python tests/mcp_e2e.py
 
 ---
 
-## 3. 七个 MCP 工具详解
+## 3. 九个 MCP 工具详解
 
 | 工具 | 用途 | 必填参数 | 可选参数 | 返回 |
 |---|---|---|---|---|
@@ -122,12 +122,38 @@ python tests/mcp_e2e.py
 | `java_to_cangjie` | Java 符号 → Cangjie 等价物 | `java_symbol` | — | j2cjlib 映射 + 术语映射 |
 | `error_fix_hint` | 编译错误 → 相关 API + 示例 | `error_text` | `top_k` | 相关 API 和示例 |
 | `list_modules` | 列出知识库全部模块 | — | — | 模块名 + API/示例数量 |
+| `resolve_java_code` | **渐进式披露分层检索**:Java 代码 → 三级 NL 描述分别检索 | `java_code` | `module`, `top_k` | 三级检索结果 + `best_level` + 最佳命中 |
+| `describe_java_code` | 只生成 Java 代码的中英双语 NL 描述(不检索) | `java_code` | — | 三级粒度(api/statement/function)的 NL 描述 |
+
+### 分层检索(`resolve_java_code`)怎么工作
+
+渐进式披露思路:Java 代码按粒度拆三层,每层生成 NL 描述去仓颉文档检索。
+
+```
+Level 1  api      单个 API 调用    "map.put(k, v)"
+        → NL "insert a key-value pair into a map"
+        → 检索(细粒度,可能无 1:1 对应)
+Level 2  statement 语句/代码段     "while ((len = in.read(buf)) > 0) {...}"
+        → NL "copy stream data chunk by chunk until EOF"
+        → 检索(对应一个或几个 Cangjie API)
+Level 3  function 整段函数         "public void copyFile(...) {...}"
+        → NL "copy a file"
+        → 检索(对应整个功能模块)
+```
+
+- NL 描述由 LLM 生成(配置了 key 时)或启发式(驼峰拆分 + 术语映射)兜底
+- 每层独立检索,按"查询词与顶部结果的 token 重叠度"打分,分最高者为 `best_level`
+- **用法**:从 `best_level` 开始取结果;细粒度没命中就退到粗粒度(渐进披露)
 
 ### 典型使用场景
 
 **场景 A:翻译一个 Java 片段之前**
 
 ```
+# 0.(推荐)直接把整个片段丢给分层检索
+resolve_java_code("map.put(key, value);")
+#    → statement 层命中 replace(K,V)/add(K,V)(Cangjie 中 put 的正确对应)
+
 # 1. 先确认 Java 类型在 Cangjie 里对应什么
 java_to_cangjie("java.util.HashMap")
 #    → 没有直接 shim,则 search_api("HashMap")
@@ -165,7 +191,12 @@ cangjie-knowledge-mcp/
 │   │                                #   JavaMapping / KnowledgeBase(内存容器+JSONL读写)
 │   ├── config.py                    # 读 config.yaml;相对路径解析到项目根;
 │   │                                #   环境变量覆盖(OPENAI_API_KEY 等)
-│   ├── mcp_server.py                # ★ MCP 服务器:JSON-RPC 协议 + 7 个工具实现 +
+│   ├── nl_generator.py              # ★ Java 代码 → 中英双语 NL 描述
+│   │                                #   (api/statement/function 三级粒度;
+│   │                                #    LLM 生成,无 key 时启发式兜底)
+│   ├── layered_search.py            # ★ 渐进式披露分层检索:
+│   │                                #   三级 NL 分别检索 + best_level 判定
+│   ├── mcp_server.py                # ★ MCP 服务器:JSON-RPC 协议 + 9 个工具实现 +
 │   │                                #   stdio 主循环;零第三方依赖
 │   │
 │   ├── collector/                   # ── 构建阶段:语料 → 记录 ──

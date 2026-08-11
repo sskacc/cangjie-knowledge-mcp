@@ -15,6 +15,46 @@ Cangjie 标准库中的**来源(哪个库、哪个模块)**、**完整签名**�
 | 读文件怎么写? | `find_examples("read file bytes")` → 官方 sample 代码 |
 | `java.util.List` 对应 Cangjie 什么? | `java_to_cangjie("java.util.List")` → j2cjlib 映射 |
 | `cannot find symbol println` 怎么修? | `error_fix_hint("...")` → 相关 API 文档 + 示例 |
+| 一段 Java 代码怎么翻译? | `resolve_java_code("<java代码>")` → 渐进式披露分层检索(见下文) |
+
+## 渐进式披露的分层检索(核心特性)
+
+**把 Java 代码按粒度分层,每层生成自然语言(NL)描述,分别去
+仓颉文档检索**。细粒度没有一一对应时,自动上升到粗粒度找等价功能。
+
+```
+Level 1  api      最细粒度: 单个 API 调用      "map.put(k, v)"
+                  → NL "insert a key-value pair into a map"
+                  → 检索: 可能没有 1:1 对应(Cangjie 没有 put)
+
+Level 2  statement 中间粒度: 语句/代码段        "while ((len = in.read(buf)) > 0) {...}"
+                  → NL "copy stream data chunk by chunk until EOF"
+                  → 检索: 对应 Cangjie 的一个或几个 API
+
+Level 3  function 最粗粒度: 整段函数            "public void copyFile(...) {...}"
+                  → NL "copy a file"
+                  → 检索: 对应 Cangjie 的整个功能模块
+```
+
+**工作机制**:
+
+1. `describe_java_code` 把 Java 代码在三级粒度上各生成一条中英双语 NL 描述
+   (配置了 LLM 时用 LLM 生成,质量最好;否则用启发式:驼峰拆分 + 术语映射)
+2. `resolve_java_code` 把每一级的 NL 描述分别送进 BM25 检索(API 文档 + 示例)
+3. 每层算出命中分数(查询词与顶部结果的重叠度),**分数最高的层即为 `best_level`**
+   ——分数高说明这段 NL 在仓颉文档里确实有对应物
+4. 调用方从 `best_level` 开始使用,细粒度不匹配就退到粗粒度
+
+**实测效果**(deepseek-v4-flash 生成 NL):
+
+| Java 代码 | best_level | 命中 |
+|---|---|---|
+| `map.put(key, value)` | statement | `replace(K,V)` / `add(K,V)`(std.collection)——Cangjie 中 put 的正确对应 |
+| `while ((len = in.read(buf)) > 0) { out.write(...) }` | statement | `std.io.copy(from: InputStream, to!: OutputStream)` |
+| `String line = reader.readLine()` | statement | `std.io` 读取类 API |
+
+分层检索让"方法名不同但功能相同"的匹配(put→replace、readLine→readln)从碰运气
+变成可检索——因为 NL 描述描述的是**功能意图**而不是方法名。
 
 ## 架构
 
@@ -24,6 +64,8 @@ cangjie-knowledge-mcp/
 ├── src/cjkb/
 │   ├── models.py                # ApiRecord / ExampleRecord / JavaMapping 数据模型
 │   ├── config.py                # 配置加载(支持环境变量覆盖)
+│   ├── nl_generator.py          # Java 代码 → 中英双语 NL 描述(API/语句/函数三级)
+│   ├── layered_search.py        # 渐进式披露分层检索(best_level 判定)
 │   ├── collector/
 │   │   ├── corpus_parser.py     # 解析 CangjieCorpus 官方文档 → API/示例记录
 │   │   ├── j2cj_parser.py       # 解析 j2cjlib shim + 术语表 → Java→Cangjie 映射
@@ -49,7 +91,9 @@ CangjieCorpus(官方文档)
    v
 collector/corpus_parser.py ──┐
                              ├──> KnowledgeBase(JSONL) ──> BM25 索引 ──> MCP server
-j2cjlib shim + 术语表 ────────┘         │                          (stdio, 7 个工具)
+j2cjlib shim + 术语表 ────────┘         │                          (stdio, 9 个工具)
+                                        │
+java 代码 → nl_generator(三级 NL) → layered_search(渐进披露) ──┘
 ```
 
 ### 数据来源(知识库的内容来自哪里)
@@ -67,7 +111,7 @@ j2cjlib shim + 术语表 ────────┘         │                
 3. **Java 术语扩展**:查询 token 先查 Java→Cangjie 映射表,把 Java 词汇展开成 Cangjie 同义词再检索(解决 `Thread` vs `线程` 的匹配问题)。
 4. **精确名索引**:`get_api_details` / `get_class_members` 走精确名 → 记录索引,不依赖相似度。
 
-### MCP 工具(7 个)
+### MCP 工具(9 个)
 
 | 工具 | 说明 | 典型调用 |
 |---|---|---|
@@ -78,6 +122,8 @@ j2cjlib shim + 术语表 ────────┘         │                
 | `java_to_cangjie` | Java 符号 → Cangjie 等价物 | `java_to_cangjie("java.util.List")` |
 | `error_fix_hint` | 编译错误 → 相关 API + 示例 | `error_fix_hint("cannot find symbol println")` |
 | `list_modules` | 列出知识库中所有模块 | `list_modules()` |
+| `resolve_java_code` | **渐进式披露分层检索**:Java 代码 → 三级 NL 描述分别检索,返回各层结果 + `best_level` | `resolve_java_code("map.put(key, value);")` |
+| `describe_java_code` | 只生成 Java 代码的中英双语 NL 描述(不检索),供构建 prompt 用 | `describe_java_code("String line = reader.readLine();")` |
 
 ## 快速开始
 
@@ -124,16 +170,17 @@ python scripts/build_kb.py \
 }
 ```
 
-注册后,agent 在片段翻译和错误修复时可以直接调用上述 7 个工具。
+注册后,agent 在片段翻译和错误修复时可以直接调用上述 9 个工具。
 
 ## 在片段翻译流程中使用
 
 以 x2cangjie 的 `translate_fragment.sh` 流程为例,推荐的调用时机:
 
 1. **翻译前**(对应 prompt 注入顺序中的 RAG 层,见 `docs/fragment_translation_enhancements.md`):
-   - 从待翻译片段中提取方法调用/类型引用(如 `HashMap.put`、`FileInputStream`)
-   - `java_to_cangjie("java.util.HashMap")` → 得到 Cangjie 类型
-   - `get_class_members("HashMap")` → 确认实际方法名(`add` 而非 `put`)
+   - 把整个待翻译片段丢给 `resolve_java_code` → 得到三级检索结果 + `best_level`,
+     从最佳层级取 API 签名和示例注入 prompt
+   - 细节确认:`get_class_members("HashMap")` → 确认实际方法名(`add` 而非 `put`);
+     `java_to_cangjie("java.util.HashMap")` → 得到 Cangjie 类型
    - `find_examples("HashMap")` → 取官方示例注入 prompt
 
 2. **错误修复循环**(`compositional_translation_validation.py` 中 `cjpm build` 失败后):
@@ -164,6 +211,22 @@ for m in s.java_to_cangjie("java.util.List"):
     print(m.java_symbol, "->", m.cangjie_symbol)
 ```
 
+## LLM 配置(可选,用于两处)
+
+配置 `config.yaml` 的 `llm` 段或环境变量 `OPENAI_API_KEY` / `OPENAI_BASE_URL` /
+`OPENAI_MODEL`。LLM 用于两处:
+
+1. **NL 描述生成**(`resolve_java_code` / `describe_java_code`):LLM 把 Java 代码转成
+   中英双语 NL 描述,比启发式(驼峰拆分)质量高很多。**未配置时自动退回启发式**,
+   检索功能不受影响,只是 NL 描述质量较低。
+2. **补写缺失示例**(见下):为没有官方示例的 API 生成示例。
+
+```bash
+export OPENAI_API_KEY="..."
+export OPENAI_BASE_URL="https://openrouter.ai/api/v1"   # 可选
+export OPENAI_MODEL="gpt-4o-mini"                        # 可选
+```
+
 ## 可选:LLM 生成缺失示例
 
 对知识库中**没有官方示例**的 API,可以用 LLM 自动补写示例(每条都标记 `generated=true`,
@@ -181,7 +244,9 @@ python scripts/build_kb.py --write-examples --example-limit 50
 
 ```bash
 python -m unittest discover -s tests -v   # 单元测试
-python tests/mcp_e2e.py                   # MCP stdio 端到端测试
+python tests/mcp_e2e.py                   # MCP stdio 端到端测试(7 个基础工具)
+python tests/mcp_layered_e2e.py           # 分层检索端到端测试(启发式,无需 LLM)
+python tests/mcp_layered_llm.py           # 分层检索端到端测试(真实 LLM,需配 key)
 ```
 
 ## 知识库现状(基于本机语料构建)

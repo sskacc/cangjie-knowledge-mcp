@@ -156,9 +156,10 @@ class TestMcpProtocol(unittest.TestCase):
         cfg = {"index": {"field_weights": {"name": 4.0, "module": 2.0, "signature": 3.0,
                                            "description": 1.0, "tags": 1.5},
                          "top_k": 10, "min_score": 0.01},
-               "output": {"data_dir": tempfile.mkdtemp()}}
+               "output": {"data_dir": tempfile.mkdtemp()},
+               "llm": {}}
         s = Searcher(kb, cfg).build()
-        server = McpServer(s)
+        server = McpServer(s, cfg)
 
         resp = server.handle_message({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         self.assertEqual(resp["result"]["serverInfo"]["name"], "cangjie-knowledge-mcp")
@@ -168,6 +169,8 @@ class TestMcpProtocol(unittest.TestCase):
         self.assertIn("search_api", names)
         self.assertIn("error_fix_hint", names)
         self.assertIn("java_to_cangjie", names)
+        self.assertIn("resolve_java_code", names)
+        self.assertIn("describe_java_code", names)
 
         resp = server.handle_message({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                       "params": {"name": "search_api",
@@ -176,6 +179,55 @@ class TestMcpProtocol(unittest.TestCase):
         data = json.loads(resp["result"]["content"][0]["text"])
         self.assertGreaterEqual(len(data["results"]), 1)
         self.assertEqual(data["results"][0]["name"], "put")
+
+
+class TestNlGenerator(unittest.TestCase):
+    def test_detect_level(self):
+        from cjkb.nl_generator import detect_level
+        self.assertEqual(detect_level("reader.readLine()"), "api")
+        self.assertEqual(detect_level("String s = new String(bytes);"), "statement")
+        self.assertEqual(detect_level("public void f() { int x = 1; return; }"), "function")
+
+    def test_heuristic_no_llm(self):
+        from cjkb.nl_generator import generate_nl, generate_layered
+        nl = generate_nl("reader.readLine()", "api", {})
+        self.assertIn("read", nl["en"].lower())
+        # layered always returns 3 levels
+        layers = generate_layered("public void copy() { reader.readLine(); }", {})
+        self.assertEqual(set(layers.keys()), {"api", "statement", "function"})
+        for lvl in layers.values():
+            self.assertIn("en", lvl)
+            self.assertIn("zh", lvl)
+
+
+class TestLayeredSearch(unittest.TestCase):
+    def test_layered_search_finds_best_level(self):
+        from cjkb.layered_search import layered_search
+        from cjkb.models import ApiRecord, ExampleRecord, KnowledgeBase
+        from cjkb.index.searcher import Searcher
+
+        kb = KnowledgeBase()
+        kb.apis.append(ApiRecord(name="readln", kind="func", module="std.io", library="std",
+                                 signature="public func readln(): Option<String>",
+                                 description="按行读取流中的数据。" * 3))
+        kb.apis.append(ApiRecord(name="readToEnd", kind="func", module="std.io", library="std",
+                                 signature="public func readToEnd(): String",
+                                 description="读取流中所有剩余数据。" * 3))
+        kb.examples.append(ExampleRecord(title="read lines", code="for (line in reader.lines()) {}",
+                                         module="std.io"))
+        cfg = {"index": {"field_weights": {"name": 4.0, "module": 2.0, "signature": 3.0,
+                                           "description": 1.0, "tags": 1.5},
+                         "top_k": 10, "min_score": 0.01},
+               "output": {"data_dir": tempfile.mkdtemp()}, "llm": {}}
+        s = Searcher(kb, cfg).build()
+        res = layered_search(s, "String line = reader.readLine();", cfg, module="std.io", top_k=3)
+        self.assertIn("best_level", res)
+        self.assertIn("levels", res)
+        for lvl in ("api", "statement", "function"):
+            self.assertIn(lvl, res["levels"])
+        # heuristic NL 'read line' should land on readln
+        self.assertIsNotNone(res["best_hit"])
+        self.assertIn(res["best_hit"].name, ("readln", "readToEnd"))
 
 
 if __name__ == "__main__":
