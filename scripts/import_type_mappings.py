@@ -12,7 +12,7 @@ Sources consumed:
 
 Usage:
     python scripts/import_type_mappings.py \
-        --type-resolution D:/x2cangjie/x2cangjie/data/java/type_resolution \
+        --type-resolution <x2cangjie路径>/data/java/type_resolution \
         --data-dir data
 """
 

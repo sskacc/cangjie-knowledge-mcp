@@ -1,16 +1,17 @@
 # cangjie-knowledge-mcp configuration
 
-# Where the Cangjie documentation corpus lives.
+# Where the Cangjie documentation corpus lives (only needed when rebuilding
+# the KB from scratch; the committed data/ already contains the parsed KB).
 # Relative paths are resolved against the project root.
 corpus:
   # Local CangjieCorpus clone (https://gitcode.com/Cangjie/cangjie_runtime docs + manual)
-  cangjie_corpus: "D:/x2cangjie/x2cangjie/misc/CangjieCorpus"
+  cangjie_corpus: "<x2cangjie路径>/misc/CangjieCorpus"
   # j2cjlib: hand-written Java-compatible shim implementations in Cangjie
-  j2cjlib: "D:/x2cangjie/x2cangjie/misc/j2cjlib"
+  j2cjlib: "<x2cangjie路径>/misc/j2cjlib"
   # Terminology map (Java -> Cangjie terms) used for BM25 query construction
-  java_terms: "D:/x2cangjie/x2cangjie/configs/java_cangjie_terms.yaml"
+  java_terms: "<x2cangjie路径>/configs/java_cangjie_terms.yaml"
   # Optional: official stdlib API docs cloned from gitcode (auth-gated; see README)
-  gitcode_api_docs: ""   # e.g. "D:/data/cangjie_runtime/stdlib/doc"
+  gitcode_api_docs: ""
 
 # Where the built knowledge base is written (relative to project root)
 output:
@@ -29,7 +30,9 @@ index:
   # Minimal BM25 score to return a result (filters noise)
   min_score: 0.01
 
-# LLM example writer (optional; used only when --write-examples is passed)
+# LLM config (optional; used by generate_examples.py and NL description
+# generation in resolve_java_code / describe_java_code). Empty values fall
+# back to OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL env vars.
 llm:
   base_url: ""            # defaults to OPENAI_BASE_URL env
   api_key: ""             # defaults to OPENAI_API_KEY env

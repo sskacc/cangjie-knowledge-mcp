@@ -59,7 +59,7 @@
 
 ### 2.2 注册到 opencode(推荐)
 
-在 `opencode.json` 里加:
+在 `opencode.json` 里加,`<项目路径>` 换成你 clone 本仓库的位置:
 
 ```jsonc
 {
@@ -68,8 +68,8 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "D:/x2cangjie/cangjie-knowledge-mcp/src/cjkb/mcp_server.py",
-        "--data-dir", "D:/x2cangjie/cangjie-knowledge-mcp/data"
+        "<项目路径>/src/cjkb/mcp_server.py",
+        "--data-dir", "<项目路径>/data"
       ]
     }
   }
@@ -81,7 +81,7 @@
 
 ### 2.3 注册到 Claude Desktop
 
-`claude_desktop_config.json`:
+`claude_desktop_config.json`,`<项目路径>` 同上:
 
 ```jsonc
 {
@@ -89,8 +89,8 @@
     "cangjie-kb": {
       "command": "python",
       "args": [
-        "D:/x2cangjie/cangjie-knowledge-mcp/src/cjkb/mcp_server.py",
-        "--data-dir", "D:/x2cangjie/cangjie-knowledge-mcp/data"
+        "<项目路径>/src/cjkb/mcp_server.py",
+        "--data-dir", "<项目路径>/data"
       ]
     }
   }

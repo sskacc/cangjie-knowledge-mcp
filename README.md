@@ -131,12 +131,12 @@ java 代码 → java_types(提取) → layered_search(类型锁定+渐进披露)
 
 ### 数据来源(知识库的内容来自哪里)
 
-| 来源 | 内容 | 位置 |
+| 来源 | 内容 | 获取方式 |
 |---|---|---|
-| **CangjieCorpus** | 官方 stdlib 文档:`std.*` 37 个模块 + `stdx.*` 扩展库,含 API 签名、功能说明、官方示例 | `misc/CangjieCorpus`(即 [gitcode.com/Cangjie/cangjie_runtime](https://gitcode.com/Cangjie) 文档的本地镜像) |
-| **j2cjlib** | 手写的 Java 兼容 shim 类(`J2CjThread`、`J2CjByteArrayInputStream`、`TimeUnit`…),直接给出 Java 类 → Cangjie 类的对应 | `misc/j2cjlib` |
-| **java_cangjie_terms.yaml** | Java 术语 → Cangjie 术语词汇表,用于查询扩展(搜 "Thread" 也能命中含"线程"的文档) | x2cangjie `configs/` |
-| **x2cangjie 类型翻译产物** | `translate_type_rag.py` 产出的 **3257 条** Java→Cangjie 类型映射(含 reasoning),让类型锁定从"猜"变"查表" | x2cangjie `data/java/type_resolution/`,用 `scripts/import_type_mappings.py` 导入 |
+| **CangjieCorpus** | 官方 stdlib 文档:`std.*` 37 个模块 + `stdx.*` 扩展库,含 API 签名、功能说明、官方示例。来自 [gitcode.com/Cangjie/cangjie_runtime](https://gitcode.com/Cangjie) 文档 | 已内置在 `data/`;**从零重建**时由 `build_kb.py` 解析 |
+| **j2cjlib** | 手写的 Java 兼容 shim 类(`J2CjThread`、`J2CjByteArrayInputStream`、`TimeUnit`…),直接给出 Java 类 → Cangjie 类的对应 | 已内置在 `data/`;重建时由 `build_kb.py` 解析 |
+| **java_cangjie_terms.yaml** | Java 术语 → Cangjie 术语词汇表,用于查询扩展(搜 "Thread" 也能命中含"线程"的文档)。来自 **x2cangjie** 项目(Java→Cangjie 翻译流水线,本知识库是它的配套检索工具) | 已内置在 `data/`;重建时由 `build_kb.py` 读取 |
+| **x2cangjie 类型翻译产物** | **x2cangjie** 项目的 `translate_type_rag.py` 产出的 **3257 条** Java→Cangjie 类型映射(含 reasoning),让类型锁定从"猜"变"查表" | 已内置在 `data/`;更新时用 `scripts/import_type_mappings.py` 导入 |
 
 ### 检索原理
 
@@ -207,17 +207,19 @@ git push
 
 ### 从零重建(只在语料变化时用)
 
-如果 Cangjie 官方语料更新了,或你想重新收集:
+如果 Cangjie 官方语料更新了,或你想重新收集。语料来自 **x2cangjie 项目**
+(一个 Java→Cangjie 翻译流水线,本知识库是它的配套检索工具),路径按你的
+实际 clone 位置填写:
 
 ```bash
 python scripts/build_kb.py \
-  --corpus D:/x2cangjie/x2cangjie/misc/CangjieCorpus \
-  --j2cjlib D:/x2cangjie/x2cangjie/misc/j2cjlib \
-  --terms D:/x2cangjie/x2cangjie/configs/java_cangjie_terms.yaml
+  --corpus <x2cangjie路径>/misc/CangjieCorpus \
+  --j2cjlib <x2cangjie路径>/misc/j2cjlib \
+  --terms <x2cangjie路径>/configs/java_cangjie_terms.yaml
 
 # 重建后导入 x2cangjie 类型翻译产物(3257 条映射,类型锁定靠它)
 python scripts/import_type_mappings.py \
-  --type-resolution D:/x2cangjie/x2cangjie/data/java/type_resolution
+  --type-resolution <x2cangjie路径>/data/java/type_resolution
 ```
 
 > ⚠️ `build_kb.py` 会**覆盖** data/*.jsonl。如果你手动维护过 jsonl,
@@ -225,7 +227,8 @@ python scripts/import_type_mappings.py \
 
 ### 在 agent 工具中注册 MCP
 
-在 opencode 的 `opencode.json`(或 Claude Desktop 配置)中注册:
+在 opencode 的 `opencode.json`(或 Claude Desktop 配置)中注册,
+`<项目路径>` 换成你 clone 本仓库的位置:
 
 ```jsonc
 // opencode.json
@@ -234,7 +237,7 @@ python scripts/import_type_mappings.py \
     "cangjie-kb": {
       "type": "stdio",
       "command": "python",
-      "args": ["D:/x2cangjie/cangjie-knowledge-mcp/src/cjkb/mcp_server.py", "--data-dir", "D:/x2cangjie/cangjie-knowledge-mcp/data"],
+      "args": ["<项目路径>/src/cjkb/mcp_server.py", "--data-dir", "<项目路径>/data"],
       "env": {}
     }
   }
