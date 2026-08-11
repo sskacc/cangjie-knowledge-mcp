@@ -186,12 +186,12 @@ python -m cjkb.mcp_server --data-dir data
 
 ### 手动维护知识库(推荐工作流)
 
-你打算手动维护 `data/`——这正是 JSONL 托管进 git 的原因:**JSONL 是人类可读、
-可 diff、可 review 的源数据**,pkl 是机器生成的派生品。维护流程:
+`data/` 的 JSONL 托管进 git 的原因:**JSONL 是人类可读、可 diff、可 review 的
+源数据**,pkl 是机器生成的派生品。维护流程:
 
 ```bash
 # 1. 编辑 data/*.jsonl(增删 API 记录 / 示例 / Java 映射)
-#    手动维护时建议直接编辑 jsonl,不重跑 build_kb.py(避免覆盖你的改动)
+#    直接编辑 jsonl 即可,不必重跑 build_kb.py(重跑会覆盖手动改动)
 
 # 2. 重建索引(改了 jsonl 后必须做,否则检索用旧索引)
 python scripts/install_kb.py    # 或直接启动 MCP,load 时检测到 jsonl 更新会自动重建
@@ -207,9 +207,9 @@ git push
 
 ### 从零重建(只在语料变化时用)
 
-如果 Cangjie 官方语料更新了,或你想重新收集。语料来自 **x2cangjie 项目**
-(一个 Java→Cangjie 翻译流水线,本知识库是它的配套检索工具),路径按你的
-实际 clone 位置填写:
+当 Cangjie 官方语料更新,或需要重新收集时。语料来自 **x2cangjie 项目**
+(一个 Java→Cangjie 翻译流水线,本知识库是它的配套检索工具),路径按实际
+clone 位置填写:
 
 ```bash
 python scripts/build_kb.py \
@@ -222,8 +222,8 @@ python scripts/import_type_mappings.py \
   --type-resolution <x2cangjie路径>/data/java/type_resolution
 ```
 
-> ⚠️ `build_kb.py` 会**覆盖** data/*.jsonl。如果你手动维护过 jsonl,
-> 重跑前先 `git commit`(可回滚),或把手动改动备份。
+> ⚠️ `build_kb.py` 会**覆盖** data/*.jsonl。若 jsonl 已有手动改动,
+> 重跑前先 `git commit`(可回滚),或先备份手动改动。
 
 ### 在 agent 工具中注册 MCP
 

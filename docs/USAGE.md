@@ -398,7 +398,7 @@ python -m cjkb.mcp_server --data-dir data
 ## 7. 常见问题
 
 **Q: MCP 服务器启动报 "knowledge base not found"?**
-A: 先跑 `python scripts/build_kb.py`,确认 `data/apis.jsonl` 存在;
+A: 先跑 `python scripts/install_kb.py`,确认 `data/apis.jsonl` 存在;
    或 `--data-dir` 指向错了目录。
 
 **Q: 为什么我的 Java 查询命中率不高?**
