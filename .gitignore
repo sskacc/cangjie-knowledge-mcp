@@ -6,8 +6,12 @@ build/
 dist/
 
 # knowledge base output
-data/
+# JSONL sources are COMMITTED (clone-and-go + manual maintenance).
+# Binary BM25 index (.pkl) is regenerated on install/first-run.
+data/*
 !data/.gitkeep
+!data/*.jsonl
+!data/*.json
 
 # python
 .venv/

@@ -1,0 +1,290 @@
+{
+  "std.argopt": {
+    "library": "std",
+    "module_dir": "argopt",
+    "apis": 10,
+    "examples": 3
+  },
+  "std.ast": {
+    "library": "std",
+    "module_dir": "ast",
+    "apis": 689,
+    "examples": 6
+  },
+  "std.binary": {
+    "library": "std",
+    "module_dir": "binary",
+    "apis": 8,
+    "examples": 0
+  },
+  "std.collection": {
+    "library": "std",
+    "module_dir": "collection",
+    "apis": 310,
+    "examples": 16
+  },
+  "std.collection_concurrent": {
+    "library": "std",
+    "module_dir": "collection_concurrent",
+    "apis": 62,
+    "examples": 5
+  },
+  "std.console": {
+    "library": "std",
+    "module_dir": "console",
+    "apis": 0,
+    "examples": 1
+  },
+  "std.convert": {
+    "library": "std",
+    "module_dir": "convert",
+    "apis": 9,
+    "examples": 1
+  },
+  "std.core": {
+    "library": "std",
+    "module_dir": "core",
+    "apis": 330,
+    "examples": 2
+  },
+  "std.crypto": {
+    "library": "std",
+    "module_dir": "crypto",
+    "apis": 0,
+    "examples": 0
+  },
+  "std.database_sql": {
+    "library": "std",
+    "module_dir": "database_sql",
+    "apis": 77,
+    "examples": 4
+  },
+  "std.deriving": {
+    "library": "std",
+    "module_dir": "deriving",
+    "apis": 0,
+    "examples": 1
+  },
+  "std.env": {
+    "library": "std",
+    "module_dir": "env",
+    "apis": 56,
+    "examples": 1
+  },
+  "std.fs": {
+    "library": "std",
+    "module_dir": "fs",
+    "apis": 98,
+    "examples": 4
+  },
+  "std.io": {
+    "library": "std",
+    "module_dir": "io",
+    "apis": 98,
+    "examples": 7
+  },
+  "std.math": {
+    "library": "std",
+    "module_dir": "math",
+    "apis": 172,
+    "examples": 1
+  },
+  "std.math_numeric": {
+    "library": "std",
+    "module_dir": "math_numeric",
+    "apis": 105,
+    "examples": 6
+  },
+  "std.net": {
+    "library": "std",
+    "module_dir": "net",
+    "apis": 302,
+    "examples": 5
+  },
+  "std.objectpool": {
+    "library": "std",
+    "module_dir": "objectpool",
+    "apis": 0,
+    "examples": 0
+  },
+  "std.overflow": {
+    "library": "std",
+    "module_dir": "overflow",
+    "apis": 71,
+    "examples": 4
+  },
+  "std.posix": {
+    "library": "std",
+    "module_dir": "posix",
+    "apis": 0,
+    "examples": 4
+  },
+  "std.process": {
+    "library": "std",
+    "module_dir": "process",
+    "apis": 23,
+    "examples": 2
+  },
+  "std.random": {
+    "library": "std",
+    "module_dir": "random",
+    "apis": 29,
+    "examples": 0
+  },
+  "std.ref": {
+    "library": "std",
+    "module_dir": "ref",
+    "apis": 7,
+    "examples": 1
+  },
+  "std.reflect": {
+    "library": "std",
+    "module_dir": "reflect",
+    "apis": 196,
+    "examples": 3
+  },
+  "std.regex": {
+    "library": "std",
+    "module_dir": "regex",
+    "apis": 27,
+    "examples": 1
+  },
+  "std.runtime": {
+    "library": "std",
+    "module_dir": "runtime",
+    "apis": 15,
+    "examples": 0
+  },
+  "std.sort": {
+    "library": "std",
+    "module_dir": "sort",
+    "apis": 6,
+    "examples": 1
+  },
+  "std.sync": {
+    "library": "std",
+    "module_dir": "sync",
+    "apis": 157,
+    "examples": 1
+  },
+  "std.time": {
+    "library": "std",
+    "module_dir": "time",
+    "apis": 70,
+    "examples": 5
+  },
+  "std.unicode": {
+    "library": "std",
+    "module_dir": "unicode",
+    "apis": 25,
+    "examples": 0
+  },
+  "std.unittest": {
+    "library": "std",
+    "module_dir": "unittest",
+    "apis": 175,
+    "examples": 6
+  },
+  "std.unittest_common": {
+    "library": "std",
+    "module_dir": "unittest_common",
+    "apis": 50,
+    "examples": 0
+  },
+  "std.unittest_diff": {
+    "library": "std",
+    "module_dir": "unittest_diff",
+    "apis": 3,
+    "examples": 0
+  },
+  "std.unittest_mock": {
+    "library": "std",
+    "module_dir": "unittest_mock",
+    "apis": 94,
+    "examples": 4
+  },
+  "std.unittest_mock_mockmacro": {
+    "library": "std",
+    "module_dir": "unittest_mock_mockmacro",
+    "apis": 0,
+    "examples": 0
+  },
+  "std.unittest_prop_test": {
+    "library": "std",
+    "module_dir": "unittest_prop_test",
+    "apis": 62,
+    "examples": 0
+  },
+  "std.unittest_testmacro": {
+    "library": "std",
+    "module_dir": "unittest_testmacro",
+    "apis": 0,
+    "examples": 0
+  },
+  "stdx.aspectCJ": {
+    "library": "stdx",
+    "module_dir": "aspectCJ",
+    "apis": 3,
+    "examples": 1
+  },
+  "stdx.compress": {
+    "library": "stdx",
+    "module_dir": "compress",
+    "apis": 0,
+    "examples": 2
+  },
+  "stdx.crypto": {
+    "library": "stdx",
+    "module_dir": "crypto",
+    "apis": 0,
+    "examples": 5
+  },
+  "stdx.encoding": {
+    "library": "stdx",
+    "module_dir": "encoding",
+    "apis": 0,
+    "examples": 10
+  },
+  "stdx.fuzz": {
+    "library": "stdx",
+    "module_dir": "fuzz",
+    "apis": 85,
+    "examples": 4
+  },
+  "stdx.log": {
+    "library": "stdx",
+    "module_dir": "log",
+    "apis": 61,
+    "examples": 1
+  },
+  "stdx.logger": {
+    "library": "stdx",
+    "module_dir": "logger",
+    "apis": 21,
+    "examples": 1
+  },
+  "stdx.net": {
+    "library": "stdx",
+    "module_dir": "net",
+    "apis": 0,
+    "examples": 10
+  },
+  "stdx.serialization": {
+    "library": "stdx",
+    "module_dir": "serialization",
+    "apis": 36,
+    "examples": 2
+  },
+  "stdx.unittest": {
+    "library": "stdx",
+    "module_dir": "unittest",
+    "apis": 0,
+    "examples": 0
+  },
+  "extra": {
+    "library": "std",
+    "module_dir": "extra",
+    "apis": 1,
+    "examples": 12
+  }
+}

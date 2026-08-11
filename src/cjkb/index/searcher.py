@@ -179,11 +179,32 @@ class Searcher:
         self._example_index.save(os.path.join(path, "bm25_examples.pkl"))
 
     @staticmethod
-    def load(data_dir: str, cfg: Dict) -> "Searcher":
+    def load(data_dir: str, cfg: Dict, auto_rebuild: bool = True) -> "Searcher":
+        """Load a Searcher from JSONL sources + pkl index.
+
+        If `auto_rebuild` and the BM25 pkl files are missing or older than the
+        JSONL sources (e.g. right after a fresh clone where only JSONL was
+        committed), rebuild the index in-memory and persist it.
+        """
         kb = KnowledgeBase.from_jsonl(data_dir)
         s = Searcher(kb, cfg, data_dir=data_dir)
-        s._api_index = BM25Index.load(os.path.join(data_dir, "bm25_apis.pkl"))
-        s._example_index = BM25Index.load(os.path.join(data_dir, "bm25_examples.pkl"))
+        api_pkl = os.path.join(data_dir, "bm25_apis.pkl")
+        ex_pkl = os.path.join(data_dir, "bm25_examples.pkl")
+        need_rebuild = (not os.path.exists(api_pkl) or not os.path.exists(ex_pkl))
+        if not need_rebuild and auto_rebuild:
+            # stale if any source jsonl is newer than the pkl
+            for src in ("apis.jsonl", "examples.jsonl", "java_mappings.jsonl"):
+                sp = os.path.join(data_dir, src)
+                if os.path.exists(sp) and os.path.getmtime(sp) > os.path.getmtime(api_pkl):
+                    need_rebuild = True
+                    break
+        if need_rebuild and auto_rebuild:
+            print(f"[searcher] rebuilding BM25 index in {data_dir} "
+                  f"(missing or stale pkl; sources are committed, index is derived)")
+            return Searcher(kb, cfg, data_dir=data_dir).build_and_save()
+
+        s._api_index = BM25Index.load(api_pkl)
+        s._example_index = BM25Index.load(ex_pkl)
         s._name_index = {}
         for i, rec in enumerate(kb.apis):
             s._name_index.setdefault(rec.name.lower(), []).append(i)
@@ -197,3 +218,9 @@ class Searcher:
         s._api_docs = [s._api_text(r) for r in kb.apis]
         s._example_docs = [f"{r.title} {r.module} {r.description} {r.code[:2000]}" for r in kb.examples]
         return s
+
+    def build_and_save(self) -> "Searcher":
+        """Build indexes from the current KB and persist, returning self."""
+        self.build()
+        self.save()
+        return self
