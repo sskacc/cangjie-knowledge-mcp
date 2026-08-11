@@ -323,12 +323,12 @@ mcp_server.py (tools/call: resolve_java_code)
 
 | 文件 | 大小(约) | 内容 | 谁写 | 谁读 |
 |---|---|---|---|---|
-| `apis.jsonl` | 5.1 MB | **3537 条 API 记录**,每行一个 JSON:`name / kind / module / library / signature / description / params / returns / exceptions / parent / source / examples / tags` | build_kb | Searcher.load → get_api_details / get_class_members / search_api |
-| `examples.jsonl` | 269 KB | **228 条示例**,每行一个 JSON:`title / code / module / library / source / description / tags / generated`。其中 **4 条 `generated=true`**(LLM 补写的) | build_kb (+example_writer) | Searcher.load → find_examples |
-| `java_mappings.jsonl` | ~600 KB | **3257 条 Java→Cangjie 映射**,每行:`java_symbol / cangjie_symbol / source / notes / library`。其中 93 条来自 j2cjlib+术语表,3164 条来自 x2cangjie 类型翻译产物(`library=type_resolution`) | build_kb(j2cj_parser) + import_type_mappings | Searcher.load → java_to_cangjie + 类型锁定 + 查询扩展 |
-| `modules.json` | 5 KB | **48 个模块的统计**:每个模块的 `library / module_dir / apis / examples` 数量 | build_kb | list_modules 工具 |
-| `bm25_apis.pkl` | 1.3 MB | API 记录的 **BM25 索引**(pickle):词频、文档长、IDF 等 | build_kb(index/bm25) | search_api 打分 |
-| `bm25_examples.pkl` | 147 KB | 示例的 **BM25 索引**(pickle) | build_kb | find_examples 打分 |
+| `apis.jsonl` | 5.2 MB | **3537 条 API 记录**,每行一个 JSON:`name / kind / module / library / signature / description / params / returns / exceptions / parent / source / examples / tags`。**已托管 git,可手动编辑** | build_kb / 手动 | Searcher.load → get_api_details / get_class_members / search_api |
+| `examples.jsonl` | 269 KB | **228 条示例**,每行一个 JSON:`title / code / module / library / source / description / tags / generated`。其中 **4 条 `generated=true`**(LLM 补写的)。**已托管 git,可手动编辑** | build_kb (+example_writer) / 手动 | Searcher.load → find_examples |
+| `java_mappings.jsonl` | 753 KB | **3257 条 Java→Cangjie 映射**,每行:`java_symbol / cangjie_symbol / source / notes / library`。93 条来自 j2cjlib+术语表,3164 条来自 x2cangjie 类型翻译产物。**已托管 git,可手动编辑** | build_kb + import_type_mappings / 手动 | Searcher.load → java_to_cangjie + 类型锁定 + 查询扩展 |
+| `modules.json` | 5.6 KB | **48 个模块的统计**:每个模块的 `library / module_dir / apis / examples` 数量。**已托管 git** | build_kb / 手动 | list_modules 工具 |
+| `bm25_apis.pkl` | 1.3 MB | API 记录的 **BM25 索引**(pickle)。**派生品,不入 git,首启自动重建** | install_kb / Searcher.load 自动 | search_api 打分 |
+| `bm25_examples.pkl` | 147 KB | 示例的 **BM25 索引**(pickle)。**派生品,不入 git,首启自动重建** | install_kb / Searcher.load 自动 | find_examples 打分 |
 | `.gitkeep` | 0 | 占位,保证空目录进 git | — | — |
 
 ### 一行记录长什么样
@@ -349,28 +349,36 @@ mcp_server.py (tools/call: resolve_java_code)
  "source": "llm-generated", "generated": true}
 ```
 
-### data/ 的生命周期
+### data/ 的生命周期(托管在 GitHub,clone 即用)
+
+**设计原则:JSONL 是数据(进 git),pkl 是派生品(不进 git)。**
 
 ```text
-第一次:  build_kb.py --corpus ... --data-dir data   → 生成全部文件
-增量:    build_kb.py --write-examples               → 只新增 LLM 示例(自动跳过已生成的)
-换语料:  改 config.yaml 或 --corpus 重跑,会整体覆盖
-部署:    只需要 data/ 目录 + mcp_server.py,语料目录可以删
+新机器:  git clone → JSONL 已在 → install_kb.py / MCP 首启自动重建 pkl → 直接用
+手动维护: 编辑 data/*.jsonl → install_kb.py(自动重建索引)→ git commit → push
+从零重建: build_kb.py(需语料目录)→ import_type_mappings.py → 覆盖 jsonl
+部署:     只需要 data/ 目录 + mcp_server.py,语料目录可以删
 ```
 
-> 注意:`data/` 里没有原始语料。原始 markdown 在 `misc/CangjieCorpus`,
-> `data/` 是解析后的**结构化产物**。删掉 `data/` 重跑 build_kb.py 就能重建。
+> 注意 1:`data/` 里没有原始语料。原始 markdown 在 `misc/CangjieCorpus`,
+> `data/` 是解析后的**结构化产物**。
+> 注意 2:仓库提交的是 `apis.jsonl` / `examples.jsonl` / `java_mappings.jsonl` /
+> `modules.json`;`bm25_*.pkl` 在 .gitignore 中,**首次运行自动重建**(约 1 秒),
+> 避免 pickle 跨平台/Python 版本不兼容。
+> 注意 3:手动维护请直接编辑 jsonl;重跑 `build_kb.py` 会**覆盖** jsonl,
+> 重跑前先 `git commit` 以便回滚。
 
 ---
 
 ## 6. 端到端示例:从零到能用
 
 ```bash
-# ① 装依赖(仅 PyYAML)
+# ① clone + 装依赖(JSONL 数据已在仓库中,无需构建)
+git clone https://github.com/sskacc/cangjie-knowledge-mcp.git
 pip install -r requirements.txt
 
-# ② 构建知识库(读 config.yaml 里的语料路径)
-python scripts/build_kb.py
+# ② 一键就绪(校验数据 + 自动重建 BM25 索引;首次 MCP 启动也会自动做)
+python scripts/install_kb.py
 
 # ③ 验证检索
 python scripts/query_demo.py "HashMap put key value"

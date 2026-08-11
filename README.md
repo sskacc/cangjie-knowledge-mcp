@@ -161,16 +161,16 @@ java 代码 → java_types(提取) → layered_search(类型锁定+渐进披露)
 
 ## 快速开始
 
+**知识库数据(JSONL)已随仓库托管在 GitHub**——clone 即用,不需要在本机重新构建。
+BM25 索引(.pkl)是派生产物,首次运行时自动重建。
+
 ```bash
-# 1. 安装依赖(仅 PyYAML;索引核心零依赖)
+# 1. clone + 安装依赖(仅 PyYAML;索引核心零依赖)
+git clone https://github.com/sskacc/cangjie-knowledge-mcp.git
 pip install -r requirements.txt
 
-# 2. 构建知识库(默认读 config.yaml 中的语料路径)
-python scripts/build_kb.py
-
-# 2.5 (推荐)导入 x2cangjie 类型翻译产物,让类型锁定从"猜"变"查表"
-python scripts/import_type_mappings.py \
-  --type-resolution D:/x2cangjie/x2cangjie/data/java/type_resolution
+# 2. 一键就绪:校验数据 + 自动重建索引(首次运行会自动完成,可跳过)
+python scripts/install_kb.py
 
 # 3. 命令行试一下
 python scripts/query_demo.py "HashMap put key value"
@@ -181,14 +181,47 @@ python scripts/query_demo.py --java "java.util.List"
 python -m cjkb.mcp_server --data-dir data
 ```
 
-如果语料不在默认路径,用参数覆盖:
+**首次启动 MCP 服务器时**,如果 `data/` 里只有 JSONL 没有 .pkl(刚 clone 的状态),
+`Searcher.load` 会自动重建 BM25 索引(约 1 秒),无需手动干预。
+
+### 手动维护知识库(推荐工作流)
+
+你打算手动维护 `data/`——这正是 JSONL 托管进 git 的原因:**JSONL 是人类可读、
+可 diff、可 review 的源数据**,pkl 是机器生成的派生品。维护流程:
+
+```bash
+# 1. 编辑 data/*.jsonl(增删 API 记录 / 示例 / Java 映射)
+#    手动维护时建议直接编辑 jsonl,不重跑 build_kb.py(避免覆盖你的改动)
+
+# 2. 重建索引(改了 jsonl 后必须做,否则检索用旧索引)
+python scripts/install_kb.py    # 或直接启动 MCP,load 时检测到 jsonl 更新会自动重建
+
+# 3. 提交推送
+git add data/*.jsonl
+git commit -m "kb: add HashMap add/replace examples"
+git push
+```
+
+> 规则:**JSONL 是数据,进 git;pkl 是派生品,不进 git**。新机器 clone 后
+> install_kb.py / MCP 首启都会自动重建 pkl,无需手动处理。
+
+### 从零重建(只在语料变化时用)
+
+如果 Cangjie 官方语料更新了,或你想重新收集:
 
 ```bash
 python scripts/build_kb.py \
   --corpus D:/x2cangjie/x2cangjie/misc/CangjieCorpus \
   --j2cjlib D:/x2cangjie/x2cangjie/misc/j2cjlib \
   --terms D:/x2cangjie/x2cangjie/configs/java_cangjie_terms.yaml
+
+# 重建后导入 x2cangjie 类型翻译产物(3257 条映射,类型锁定靠它)
+python scripts/import_type_mappings.py \
+  --type-resolution D:/x2cangjie/x2cangjie/data/java/type_resolution
 ```
+
+> ⚠️ `build_kb.py` 会**覆盖** data/*.jsonl。如果你手动维护过 jsonl,
+> 重跑前先 `git commit`(可回滚),或把手动改动备份。
 
 ### 在 agent 工具中注册 MCP
 
