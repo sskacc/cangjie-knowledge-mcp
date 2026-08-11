@@ -300,16 +300,34 @@ export OPENAI_MODEL="gpt-4o-mini"                        # 可选
 
 ## 可选:LLM 生成缺失示例
 
-对知识库中**没有官方示例**的 API,可以用 LLM 自动补写示例(每条都标记 `generated=true`,
-与官方示例区分):
+知识库中**没有官方示例**的 API,可以用 LLM 自动补写(每条标记 `generated=true`,
+与官方示例区分)。用独立脚本 `scripts/generate_examples.py`,直接作用于
+`data/` 现有知识库,**不重新收集语料、不覆盖手动维护**:
 
 ```bash
 export OPENAI_API_KEY="..."
 export OPENAI_BASE_URL="https://openrouter.ai/api/v1"   # 可选
-python scripts/build_kb.py --write-examples --example-limit 50
+export OPENAI_MODEL="gpt-4o-mini"                        # 可选
+
+# 先看有多少 API 缺示例
+python scripts/generate_examples.py --dry-run
+#   → "APIs missing an example: 1517"
+
+# 生成前 50 条(断点续跑:自动跳过已生成的)
+python scripts/generate_examples.py --limit 50
+
+# 生成全部缺失的(1517 条,耗时较长,可分多次跑)
+python scripts/generate_examples.py --limit 0
+
+# 多次运行即可补全;生成的示例写入 data/examples.jsonl,generated=true
 ```
 
-生成的示例会写入 `data/examples.jsonl`,`generated` 字段为 `true`。
+特点:
+- **断点续跑**:每次自动跳过已生成的 title,重跑不会重复生成
+- **优先级**:类/接口/枚举优先(价值最高),签名长的函数次之
+- **失败容忍**:LLM 空响应自动重试 2 次,失败的不计入,下次重跑会补
+- **自动重建索引**:追加后重建 BM25,`find_examples` 立即能搜到新示例
+- 生成后记得 `git add data/examples.jsonl && git commit` 把维护成果提交
 
 ## 测试
 
@@ -323,9 +341,9 @@ python tests/mcp_layered_llm.py           # 分层检索端到端测试(真实 L
 ## 知识库现状(基于本机语料构建)
 
 ```
-apis:           3543  (std.* + stdx.* + manual 中可解析的函数/类/接口/枚举)
-examples:        224  (官方 _package_samples + extra 指南代码块)
-java_mappings:    93  (j2cjlib shim 类 + 术语表)
+apis:           3537  (std.* + stdx.* + manual 中可解析的函数/类/接口/枚举)
+examples:        234  (228 官方 + 6 LLM 生成;另有 1517 个 API 待补写示例)
+java_mappings:  3257  (93 j2cjlib+术语表 + 3164 x2cangjie 类型翻译产物)
 modules:          48  (std: 37, stdx: 11)
 ```
 
