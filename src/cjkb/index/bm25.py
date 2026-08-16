@@ -16,18 +16,32 @@ import re
 from collections import Counter, defaultdict
 from typing import Dict, Iterable, List, Optional, Tuple
 
-_TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")  # underscores split words too
+# Split on anything that is NOT: ASCII alphanumeric, or a CJK ideograph.
+# (Underscore/space/punctuation all split; CJK is preserved for unigram
+# splitting in tokenize().)
+_TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9\u4e00-\u9fff]+")
 _CAMEL_SPLIT = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 def tokenize(text: str) -> List[str]:
-    """Tokenize, including camelCase/snake_case splitting and lowercasing."""
+    """Tokenize, including camelCase/snake_case splitting and lowercasing.
+
+    Non-ASCII-word characters split, but CJK ideographs are preserved. CJK
+    runs are then split into single characters (unigram) because Chinese has
+    no whitespace word boundaries; this lets BM25 score queries like "读取文件"
+    against docs containing those characters without needing a segmenter.
+    ASCII words are split on camelCase/snake_case as before.
+    """
     text = _TOKEN_SPLIT.sub(" ", text)
     toks = []
     for word in text.split():
-        for part in _CAMEL_SPLIT.split(word):
-            if part:
-                toks.append(part.lower())
+        if any(c.isascii() and c.isalpha() for c in word):
+            for part in _CAMEL_SPLIT.split(word):
+                if part:
+                    toks.append(part.lower())
+        else:
+            # pure CJK (or other non-ASCII) run: split into single characters
+            toks.extend(c.lower() for c in word)
     return toks
 
 

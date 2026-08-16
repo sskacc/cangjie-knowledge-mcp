@@ -10,6 +10,7 @@ Combines:
 from __future__ import annotations
 
 import os
+import sys
 from typing import Dict, List, Optional, Tuple
 
 from cjkb.index.bm25 import BM25Index, tokenize
@@ -155,6 +156,25 @@ class Searcher:
                 out.append(rec)
         return out
 
+    def rank_records(self, records: List[ApiRecord], query: str,
+                     top_k: Optional[int] = None) -> List[ApiRecord]:
+        """Rank a list of API records by BM25 relevance to a query.
+
+        Used by the fine-grained (api-level) path of resolve_java_code: instead
+        of returning every member of a class, we return only the members most
+        relevant to the caller's exact API-call intent. Builds a throwaway BM25
+        index over the records (records lists are small, e.g. class members).
+        """
+        if not records:
+            return []
+        top_k = top_k or self.top_k
+        q = self._expand_query(query)
+        docs = [self._api_text(r) for r in records]
+        idx = BM25Index()
+        idx.build(docs)
+        hits = idx.search(q, top_k=top_k, min_score=0.0)
+        return [records[i] for i, _s in hits]
+
     def java_to_cangjie(self, java_symbol: str) -> List[JavaMapping]:
         key = java_symbol.lower()
         out = list(self._java_map.get(key, []))
@@ -199,8 +219,12 @@ class Searcher:
                     need_rebuild = True
                     break
         if need_rebuild and auto_rebuild:
+            # stderr, not stdout: this module is loaded inside the MCP server,
+            # where stdout is the JSON-RPC protocol channel. A stray print
+            # here would corrupt the protocol and break the client's json.loads.
             print(f"[searcher] rebuilding BM25 index in {data_dir} "
-                  f"(missing or stale pkl; sources are committed, index is derived)")
+                  f"(missing or stale pkl; sources are committed, index is derived)",
+                  file=sys.stderr)
             return Searcher(kb, cfg, data_dir=data_dir).build_and_save()
 
         s._api_index = BM25Index.load(api_pkl)

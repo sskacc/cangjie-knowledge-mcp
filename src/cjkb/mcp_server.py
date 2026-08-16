@@ -25,8 +25,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from cjkb.config import load_config
 from cjkb.index.searcher import Searcher
-from cjkb.layered_search import layered_search
+from cjkb.layered_search import layered_search, resolve_java_code as _resolve_calls
 from cjkb.nl_generator import generate_nl, detect_level
+from cjkb.reranker import rerank
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -130,23 +131,25 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "resolve_java_code",
-        "description": "PROGRESSIVE-DISCLOSURE layered retrieval. "
-                       "Given a Java code fragment, generate natural-language "
-                       "descriptions at three granularities -- API call (finest, "
-                       "may have no 1:1 Cangjie match), statement/code segment "
-                       "(medium, maps to one or several Cangjie APIs), whole "
-                       "function (coarsest, maps to a whole feature) -- and search "
-                       "the Cangjie knowledge base at each layer. Use when "
-                       "translating a Java fragment: start from `best_level` and "
-                       "fall back to coarser levels when the fine-grained search "
-                       "finds nothing.",
+        "description": "PER-CALL progressive-disclosure retrieval. "
+                       "Given a Java code block, split it into individual API "
+                       "calls and produce ONE suggestion per call. For each call: "
+                       "lock the receiver's Java type -> Cangjie type (via the "
+                       "j2cjlib/x2cangjie mapping table or BM25 class search), "
+                       "then rank that class's members against the call's "
+                       "natural-language intent and return the top matches. If "
+                       "the receiver type can't be locked (e.g. a static field), "
+                       "fall back to a statement-level NL search; if the whole "
+                       "block can't be resolved, emit one block-level suggestion. "
+                       "Returns `suggestions[]` (one entry per API call) plus the "
+                       "extracted `calls` list.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "java_code": {"type": "string",
                               "description": "Java code fragment: a single method call, a statement, or a whole method body"},
                 "module": {"type": "string", "description": "optional module filter, e.g. std.io"},
-                "top_k": {"type": "integer", "description": "results per level (default 5)"},
+                "top_k": {"type": "integer", "description": "max members/results per suggestion (default 5)"},
             },
             "required": ["java_code"],
         },
@@ -205,10 +208,13 @@ class McpServer:
     def _search_api(self, a: Dict[str, Any]) -> Any:
         q = a.get("query", "")
         module = a.get("module")
-        top_k = a.get("top_k")
+        top_k = a.get("top_k") or self.searcher.top_k
         if not q:
             raise MCPError(-32602, "query is required")
-        recs = self.searcher.search_api(q, module=module, top_k=top_k)
+        # Fetch a wider recall pool, then rerank down to top_k when an LLM is
+        # configured (falls back to pure BM25 order otherwise).
+        recs = self.searcher.search_api(q, module=module, top_k=top_k * 3)
+        recs = rerank(q, recs, self.llm_cfg, top_k=top_k)
         return {"results": [_api_dict(r) for r in recs]}
 
     def _get_api_details(self, a: Dict[str, Any]) -> Any:
@@ -231,10 +237,11 @@ class McpServer:
     def _find_examples(self, a: Dict[str, Any]) -> Any:
         q = a.get("query", "")
         module = a.get("module")
-        top_k = a.get("top_k")
+        top_k = a.get("top_k") or self.searcher.top_k
         if not q:
             raise MCPError(-32602, "query is required")
-        exs = self.searcher.find_examples(q, module=module, top_k=top_k)
+        exs = self.searcher.find_examples(q, module=module, top_k=top_k * 3)
+        exs = rerank(q, exs, self.llm_cfg, top_k=top_k)
         return {"results": [_example_dict(e) for e in exs]}
 
     def _java_to_cangjie(self, a: Dict[str, Any]) -> Any:
@@ -249,13 +256,15 @@ class McpServer:
 
     def _error_fix_hint(self, a: Dict[str, Any]) -> Any:
         err = a.get("error_text", "")
-        top_k = a.get("top_k")
+        top_k = a.get("top_k") or self.searcher.top_k
         if not err:
             raise MCPError(-32602, "error_text is required")
         # 1) strip noise, 2) search API docs + examples
         clean = _clean_error(err)
-        apis = self.searcher.search_api(clean, top_k=top_k)
-        exs = self.searcher.find_examples(clean, top_k=top_k)
+        apis = self.searcher.search_api(clean, top_k=top_k * 3)
+        exs = self.searcher.find_examples(clean, top_k=top_k * 3)
+        apis = rerank(clean, apis, self.llm_cfg, top_k=top_k)
+        exs = rerank(clean, exs, self.llm_cfg, top_k=top_k)
         return {"error": err[:1000],
                 "apis": [_api_dict(r) for r in apis],
                 "examples": [_example_dict(e) for e in exs]}
@@ -270,26 +279,22 @@ class McpServer:
         top_k = a.get("top_k") or 5
         if not code:
             raise MCPError(-32602, "java_code is required")
-        res = layered_search(self.searcher, code, self.llm_cfg, module=module, top_k=top_k)
+        res = _resolve_calls(self.searcher, code, self.llm_cfg, module=module, top_k=top_k)
 
-        def _lvl_dict(lvl: Dict) -> Dict:
-            return {
-                "nl": lvl["nl"],
-                "query": lvl["query"],
-                "score": round(lvl["score"], 3),
-                "type_matched": lvl.get("type_matched", 0),
-                "apis": [_api_dict(r) for r in lvl["apis"]],
-                "examples": [_example_dict(e) for e in lvl["examples"]],
-            }
+        def _sugg_dict(sg: Dict) -> Dict:
+            d = dict(sg)
+            if "members" in sg:
+                d["members"] = [_api_dict(r) for r in sg["members"]]
+            if "examples" in sg and sg["examples"] and isinstance(sg["examples"][0], object) \
+                    and not isinstance(sg["examples"][0], dict):
+                d["examples"] = [_example_dict(e) for e in sg["examples"]]
+            return d
 
         return {
             "java_code": code,
             "java_types": res["java_types"],
-            "type_candidates": res["type_candidates"],
-            "best_level": res["best_level"],
-            "levels": {lvl: _lvl_dict(res["levels"][lvl]) for lvl in ("api", "statement", "function")},
-            "best_hit": _api_dict(res["best_hit"]) if res["best_hit"] else None,
-            "suggested": _suggested_dict(res["suggested"]) if res["suggested"] else None,
+            "calls": res["calls"],
+            "suggestions": [_sugg_dict(sg) for sg in res["suggestions"]],
         }
 
     def _describe_java_code(self, a: Dict[str, Any]) -> Any:

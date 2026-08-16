@@ -4,8 +4,8 @@
 # the KB from scratch; the committed data/ already contains the parsed KB).
 # Relative paths are resolved against the project root.
 corpus:
-  # Local CangjieCorpus clone (https://gitcode.com/Cangjie/cangjie_runtime docs + manual)
-  cangjie_corpus: "<x2cangjie路径>/misc/CangjieCorpus"
+  # Local CangjieCorpus clone (1.1.0 branch, includes per-member examples)
+  cangjie_corpus: "corpus/CangjieCorpus"
   # j2cjlib: hand-written Java-compatible shim implementations in Cangjie
   j2cjlib: "<x2cangjie路径>/misc/j2cjlib"
   # Terminology map (Java -> Cangjie terms) used for BM25 query construction
@@ -31,10 +31,14 @@ index:
   min_score: 0.01
 
 # LLM config (optional; used by generate_examples.py and NL description
-# generation in resolve_java_code / describe_java_code). Empty values fall
-# back to OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL env vars.
+# generation in resolve_java_code / describe_java_code, and by the semantic
+# rerank layer). Empty values fall back to OPENAI_API_KEY / OPENAI_BASE_URL /
+# OPENAI_MODEL env vars.
 llm:
-  base_url: ""            # defaults to OPENAI_BASE_URL env
-  api_key: ""             # defaults to OPENAI_API_KEY env
-  model: ""               # defaults to OPENAI_MODEL env
+  base_url: "https://api.deepseek.com"            # defaults to OPENAI_BASE_URL env
+  api_key: ""                                      # defaults to OPENAI_API_KEY env
+  model: "deepseek-v4-flash"               # defaults to OPENAI_MODEL env
   max_new_examples: 20
+  # Semantic rerank: reorder BM25 top-k by LLM relevance (LongCodeZip-style
+  # semantic-over-lexical). Set false to keep pure BM25 ordering.
+  rerank: true

@@ -39,6 +39,16 @@ _METHOD_RE = re.compile(
 # method call: receiver.method(args)  (receiver is a lower-case identifier)
 _CALL_RE = re.compile(r"(?P<recv>[a-z_][A-Za-z0-9_$]*)\s*\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_$]*)\s*\(")
 
+# constructor call: new Xxx(...)  (Xxx may be qualified or generic)
+# Generic args allow empty diamond `<>` (e.g. `new HashMap<>()`).
+_NEW_CALL_RE = re.compile(
+    r"\bnew\s+(?P<type>[A-Z][A-Za-z0-9_$]*(?:\.[A-Z][A-Za-z0-9_$]*)*"
+    r"(?:<[^(){};]*>)?)\s*\("
+)
+
+# assignment target: name = ...  (to attach `new Xxx(...)` to the variable)
+_ASSIGN_TARGET_RE = re.compile(r"\b([a-z_][A-Za-z0-9_$]*)\s*=\s*new\s+")
+
 # assignment:  name = expr ;  (to resolve receivers that were declared elsewhere)
 _ASSIGN_RE = re.compile(r"\b([a-z_][A-Za-z0-9_$]*)\s*=")
 
@@ -123,6 +133,26 @@ def extract_types(java_code: str) -> Dict[str, object]:
     for m in _CALL_RE.finditer(java_code):
         calls.append({"receiver": m.group("recv"), "method": m.group("method")})
 
+    # constructor calls: `new Xxx(...)` (incl. chained `new A(new B(...))`)
+    for m in _NEW_CALL_RE.finditer(java_code):
+        ctype = m.group("type").strip()
+        csimple = _simple_name(ctype)
+        if csimple in _PRIMITIVES:
+            continue
+        # try to attach to the assignment target on the same statement:
+        # `var = new Xxx(...)` -> receiver=var; else receiver='' (unassigned ctor)
+        line_start = java_code.rfind("\n", 0, m.start()) + 1
+        line = java_code[line_start:m.start()]
+        am = _ASSIGN_TARGET_RE.search(line)
+        recv = am.group(1) if am else ""
+        calls.append({
+            "receiver": recv,
+            "method": f"new {csimple}",
+            "is_ctor": True,
+            "ctor_type": ctype,
+            "ctor_simple": csimple,
+        })
+
     # assignment type resolution: `List<String> x = new ArrayList<>();` already
     # handled by _DECL_RE. `map = ...` where map declared elsewhere -> keep var_types.
 
@@ -139,9 +169,14 @@ def extract_types(java_code: str) -> Dict[str, object]:
 
     # calls on declared receivers: enrich each call with the declared type
     for c in calls:
-        vt = var_types.get(c["receiver"], "")
-        c["declared_type"] = vt
-        c["declared_simple"] = _simple_name(vt) if vt else ""
+        if c.get("is_ctor"):
+            # constructor call: the constructed type IS the receiver type
+            c["declared_type"] = c.get("ctor_type", "")
+            c["declared_simple"] = c.get("ctor_simple", "")
+        else:
+            vt = var_types.get(c["receiver"], "")
+            c["declared_type"] = vt
+            c["declared_simple"] = _simple_name(vt) if vt else ""
 
     return {
         "declared": declared,

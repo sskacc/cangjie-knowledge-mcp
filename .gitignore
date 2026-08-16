@@ -13,6 +13,12 @@ data/*
 !data/*.jsonl
 !data/*.json
 
+# local corpus clone (large, vendored from gitcode; clone separately)
+corpus/
+
+# tooling state
+.sisyphus/
+
 # python
 .venv/
 venv/

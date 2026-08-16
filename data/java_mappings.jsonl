@@ -33,7 +33,6 @@
 {"java_symbol": "java.util.Synchronizable", "cangjie_symbol": "j2cjlib.utils.Synchronizable", "source": "src/utils/sync.cj", "notes": "j2cjlib shim: class", "library": "j2cjlib"}
 {"java_symbol": "getMonitorByObject", "cangjie_symbol": "getMonitorByObject", "source": "src/utils/sync.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "arraycopy", "cangjie_symbol": "arraycopy", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "arraycopy", "cangjie_symbol": "arraycopy", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "indexOfWrap", "cangjie_symbol": "indexOfWrap", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "readWrap", "cangjie_symbol": "readWrap", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "stringValueOf", "cangjie_symbol": "stringValueOf", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
@@ -45,14 +44,9 @@
 {"java_symbol": "safeEquals", "cangjie_symbol": "safeEquals", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "join", "cangjie_symbol": "join", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "rem", "cangjie_symbol": "rem", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "rem", "cangjie_symbol": "rem", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "rem", "cangjie_symbol": "rem", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "isEmpty", "cangjie_symbol": "isEmpty", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "removeObject", "cangjie_symbol": "removeObject", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "split", "cangjie_symbol": "split", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "sort", "cangjie_symbol": "sort", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "sort", "cangjie_symbol": "sort", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
-{"java_symbol": "sort", "cangjie_symbol": "sort", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "sort", "cangjie_symbol": "sort", "source": "src/utils/utils.cj", "notes": "j2cjlib shim: member function", "library": "j2cjlib"}
 {"java_symbol": "Annotation", "cangjie_symbol": "Attribute", "source": "java_cangjie_terms.yaml", "notes": "terminology glossary", "library": "terms"}
 {"java_symbol": "Thread", "cangjie_symbol": "并发", "source": "java_cangjie_terms.yaml", "notes": "terminology glossary", "library": "terms"}

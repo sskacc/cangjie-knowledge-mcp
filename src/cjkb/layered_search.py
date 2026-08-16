@@ -27,6 +27,7 @@ from typing import Dict, List, Optional
 from cjkb.index.searcher import Searcher
 from cjkb.java_types import extract_types
 from cjkb.nl_generator import generate_layered
+from cjkb.reranker import rerank
 
 LEVELS = ["api", "statement", "function"]
 
@@ -34,6 +35,9 @@ LEVELS = ["api", "statement", "function"]
 _GENERIC_TYPES = {"Object", "String", "Integer", "Long", "Double", "Float",
                   "Boolean", "Byte", "Short", "Char", "List", "Map", "Set",
                   "Collection", "Iterable", "Optional", "Exception", "Error"}
+
+# record kinds that represent actual members (vs. the type declaration itself)
+_MEMBER_KINDS = {"init", "func", "prop", "macro", "operator", "getter", "setter"}
 
 
 def _clean_nl_query(nl: Dict[str, str]) -> str:
@@ -43,11 +47,18 @@ def _clean_nl_query(nl: Dict[str, str]) -> str:
 
 
 def _search_level(searcher: Searcher, nl: Dict[str, str],
-                  module: Optional[str], top_k: int) -> Dict:
-    """Retrieve APIs + examples for one level's NL description."""
+                  module: Optional[str], top_k: int,
+                  cfg: Optional[Dict] = None) -> Dict:
+    """Retrieve APIs + examples for one level's NL description.
+
+    Fetches a wider recall pool (top_k*3) then reranks down to top_k when an
+    LLM is configured; otherwise the result is the plain BM25 order.
+    """
     query = _clean_nl_query(nl)
-    apis = searcher.search_api(query, module=module, top_k=top_k)
-    examples = searcher.find_examples(query, module=module, top_k=top_k)
+    apis = searcher.search_api(query, module=module, top_k=top_k * 3)
+    examples = searcher.find_examples(query, module=module, top_k=top_k * 3)
+    apis = rerank(query, apis, cfg, top_k=top_k)
+    examples = rerank(query, examples, cfg, top_k=top_k)
     return {"query": query, "apis": apis, "examples": examples}
 
 
@@ -83,8 +94,12 @@ def _lock_types(searcher: Searcher, java_types: List[str],
     candidates: List[Dict] = []
     seen = set()
     for jt in java_types:
-        simple = jt.split(".")[-1] if "." in jt else jt
-        if simple in _GENERIC_TYPES:
+        # Strip generics (e.g. "HashMap<String,Integer>" -> "HashMap") and take
+        # the simple name; otherwise the mapping table lookup and the BM25
+        # class search both run on a raw generic string and miss.
+        stripped = re.sub(r"<.*>", "", jt).strip()
+        simple = stripped.split(".")[-1] if "." in stripped else stripped
+        if not simple or simple in _GENERIC_TYPES:
             continue
         # 1) exact mapping table (j2cjlib shims + terms)
         exact = searcher.java_to_cangjie(jt) or searcher.java_to_cangjie(simple)
@@ -159,12 +174,20 @@ def _cross_validate(levels: Dict[str, Dict], cangjie_types: List[str]) -> None:
 
 
 def _best_type_methods(searcher: Searcher, candidates: List[Dict],
-                       levels: Dict[str, Dict], top_k: int) -> Optional[Dict]:
+                       levels: Dict[str, Dict], best_level: str,
+                       top_k: int, cfg: Optional[Dict] = None) -> Optional[Dict]:
     """Pick the best candidate type and return its members + examples.
 
     Prefers a candidate whose class actually shows up in the retrieval hits
     (i.e. the NL search and the type lock agree); falls back to the first
     confident candidate.
+
+    Granularity-aware member selection:
+      - best_level == "api"  (fine-grained): the caller already knows exactly
+        which API it wants, so return only the members most relevant to the
+        api-level NL query (ranked by BM25), not the whole class.
+      - best_level == "statement"/"function" (coarse): the caller needs the
+        full picture to choose, so keep returning all members (current behavior).
     """
     if not candidates:
         return None
@@ -183,10 +206,21 @@ def _best_type_methods(searcher: Searcher, candidates: List[Dict],
     cj = best["cangjie_type"]
     simple = cj.split(".")[-1]
 
+    examples = searcher.find_examples(simple, top_k=top_k * 3)
+    examples = rerank(levels.get("api", {}).get("query", simple), examples, cfg, top_k=top_k)
     members = searcher.get_class_members(simple, module=best.get("module") or None)
-    examples = searcher.find_examples(simple, top_k=top_k)
     # keep only member-level records (init/prop/func), drop the class itself
-    member_recs = [r for r in members if r.kind != "class"][:top_k * 2]
+    member_recs = [r for r in members if r.kind in _MEMBER_KINDS]
+
+    if best_level == "api" and member_recs:
+        # fine-grained: rank the class's members against the api-level NL query
+        # and return only the top matches, so the caller gets a precise list of
+        # "the methods that do what I asked" instead of the whole class.
+        api_query = levels["api"]["query"]
+        member_recs = searcher.rank_records(member_recs, api_query,
+                                            top_k=max(top_k * 3, len(member_recs)))
+        member_recs = rerank(api_query, member_recs, cfg, top_k=top_k)
+
     return {
         "cangjie_type": simple,
         "module": best.get("module", ""),
@@ -230,7 +264,7 @@ def layered_search(searcher: Searcher, java_code: str, cfg: Optional[Dict] = Non
     nls = generate_layered(java_code, cfg)
     levels: Dict[str, Dict] = {}
     for lvl in LEVELS:
-        res = _search_level(searcher, nls[lvl], module, top_k)
+        res = _search_level(searcher, nls[lvl], module, top_k, cfg)
         res["score"] = _level_score(nls[lvl], res["apis"])
         res["nl"] = nls[lvl]
         levels[lvl] = res
@@ -243,7 +277,7 @@ def layered_search(searcher: Searcher, java_code: str, cfg: Optional[Dict] = Non
     best_apis = levels[best_level]["apis"]
     best_hit = best_apis[0] if best_apis else None
 
-    suggested = _best_type_methods(searcher, candidates, levels, top_k)
+    suggested = _best_type_methods(searcher, candidates, levels, best_level, top_k, cfg)
 
     return {
         "java_code": java_code,
@@ -253,4 +287,223 @@ def layered_search(searcher: Searcher, java_code: str, cfg: Optional[Dict] = Non
         "best_level": best_level,
         "best_hit": best_hit,
         "suggested": suggested,
+    }
+
+
+# ---------------------------------------------------------------------------
+# per-call resolution: one suggest per API call, escalating granularity
+# ---------------------------------------------------------------------------
+
+def _call_api_suggest(searcher: Searcher, call: Dict, java_code: str,
+                      cfg: Optional[Dict], top_k: int) -> Optional[Dict]:
+    """Level-1 (api) suggest for a single method call.
+
+    Locks the receiver's declared type, ranks that class's members against a
+    natural-language description of the call, and returns a precise suggest
+    (only the top-k members). Returns None when the type can't be locked
+    (unknown receiver) or the class has no members, so the caller escalates
+    to the statement / block level.
+    """
+    recv_type = call.get("declared_type") or call.get("declared_simple") or ""
+    recv_simple = call.get("declared_simple") or ""
+    if not recv_type or not recv_simple or recv_simple in _GENERIC_TYPES:
+        return None
+
+    # lock receiver type -> candidate Cangjie types.
+    # Use the SIMPLE name (generics already stripped by extract_types), not the
+    # raw declared_type: a generic string like "HashMap<String,Integer>" or
+    # "HashMap<>" would miss the exact mapping-table lookup and fall into the
+    # noisy BM25 class search (which can land on ConcurrentHashMap instead).
+    candidates = _lock_types(searcher, [recv_simple], top_k=top_k)
+    if not candidates:
+        return None
+    # pick the first candidate that is a clean type name, has a known module
+    # AND actually has members. Skip noisy ones: generic-form mappings
+    # ("HashMap<String, Int64>") with empty module, the too-generic "Any"
+    # fallback, and unrelated class_search hits with no members. Prefer
+    # candidates with a module so the returned suggestion carries provenance.
+    def _cand_type(c: Dict) -> str:
+        return re.sub(r"<.*>", "", c["cangjie_type"]).strip()
+
+    best = None
+    member_recs: List = []
+    # pass 1: clean name + known module + members
+    for c in candidates:
+        s = _cand_type(c)
+        if s == "Any" or not c.get("module"):
+            continue
+        mrecs = [r for r in searcher.get_class_members(s, module=c.get("module"))
+                 if r.kind in _MEMBER_KINDS]
+        if mrecs:
+            best = {**c, "cangjie_type": s}
+            member_recs = mrecs
+            break
+    # pass 2: fall back to any clean candidate with members (module unknown)
+    if best is None:
+        for c in candidates:
+            s = _cand_type(c)
+            if s == "Any":
+                continue
+            mrecs = [r for r in searcher.get_class_members(s, module=None)
+                     if r.kind in _MEMBER_KINDS]
+            if mrecs:
+                best = {**c, "cangjie_type": s}
+                member_recs = mrecs
+                break
+    if best is None or not member_recs:
+        return None
+    cj = best["cangjie_type"]
+    simple = cj.split(".")[-1]
+
+    # NL description of this call -> rank the class's members.
+    # Constructor calls bias the query toward init members (construct/create/init).
+    call_expr = _call_expr(java_code, call)
+    if call.get("is_ctor"):
+        nls = {
+            "api": {"en": f"construct create init an instance of {simple}",
+                    "zh": f"创建 {simple} 的实例初始化"},
+            "statement": {"en": f"construct create init an instance of {simple}",
+                          "zh": f"创建 {simple} 的实例初始化"},
+        }
+    else:
+        nls = generate_layered(call_expr or call.get("method", ""), cfg)
+    query = _clean_nl_query(nls["api"])
+    # Rerank the class's members by semantic relevance (falls back to BM25
+    # order when no LLM is configured). Members lists are small, so rerank
+    # works directly on the recall pool instead of a wider fetch.
+    ranked = searcher.rank_records(member_recs, query, top_k=max(top_k * 3, len(member_recs)))
+    ranked = rerank(query, ranked, cfg, top_k=top_k)
+    if not ranked:
+        return None
+
+    examples = searcher.find_examples(simple, top_k=top_k * 3)
+    examples = rerank(query, examples, cfg, top_k=top_k)
+    return {
+        "level": "api",
+        "java_expr": call_expr or f"{call.get('receiver','')}.{call.get('method','')}()",
+        "cangjie_type": simple,
+        "module": best.get("module", ""),
+        "java_type": best.get("java_type", ""),
+        "confidence": best.get("confidence", ""),
+        "source": best.get("source", ""),
+        "members": ranked[:top_k],
+        "examples": examples[:top_k],
+    }
+
+
+def _call_expr(java_code: str, call: Dict) -> str:
+    """Find the source text of a method call (receiver.method(...)) or a
+    constructor call (new Xxx(...)) in the code."""
+    if call.get("is_ctor"):
+        ctype = call.get("ctor_simple", "")
+        # balanced-paren extraction so nested ctors (new A(new B(...))) match fully
+        m2 = re.search(r"\bnew\s+" + re.escape(ctype) + r"\s*\(", java_code)
+        if m2:
+            start = m2.start()
+            depth = 0
+            i = m2.end() - 1
+            while i < len(java_code):
+                if java_code[i] == "(":
+                    depth += 1
+                elif java_code[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        return java_code[start:i + 1]
+                i += 1
+        return f"new {ctype}()"
+    recv, method = call.get("receiver", ""), call.get("method", "")
+    if not recv or not method:
+        return ""
+    m = re.search(re.escape(recv) + r"\s*\.\s*" + re.escape(method) + r"\s*\([^)]*\)", java_code)
+    return m.group(0) if m else f"{recv}.{method}()"
+
+
+def resolve_java_code(searcher: Searcher, java_code: str, cfg: Optional[Dict] = None,
+                      module: Optional[str] = None, top_k: int = 5) -> Dict:
+    """Per-call progressive-disclosure resolution for a Java code block.
+
+    Unlike `layered_search` (which treats the whole block as one unit and
+    produces a single `suggested`), this produces **one suggest per API call**
+    in the block:
+
+        Level 1 (api):      per call - lock the receiver type, rank that
+                            class's members against the call's intent.
+        Level 2 (statement): per call - fall back to the whole statement's NL
+                            when the receiver type can't be locked.
+        Level 3 (function): one suggest for the whole block (the existing
+                            layered_search path), only when calls can't be
+                            resolved individually.
+
+    Returns:
+        {
+          "java_code": ...,
+          "java_types": [...],
+          "calls": [{receiver, method, declared_type}...],
+          "suggestions": [ {level, java_expr, cangjie_type, module,
+                            java_type, confidence, members, examples} ... ],
+          "block_suggest": {...}   # L3 fallback, or None
+        }
+    """
+    extracted = extract_types(java_code)
+    calls = extracted["calls"]
+    suggestions: List[Dict] = []
+
+    for call in calls:
+        # L1: api-level per call
+        sg = _call_api_suggest(searcher, call, java_code, cfg, top_k)
+        if sg:
+            suggestions.append(sg)
+            continue
+
+        # L2: statement-level per call (whole line's NL, no type lock needed)
+        call_expr = _call_expr(java_code, call)
+        nls = generate_layered(call_expr or call.get("method", ""), cfg)
+        query = _clean_nl_query(nls["statement"])
+        apis = searcher.search_api(query, module=module, top_k=top_k * 3)
+        apis = rerank(query, apis, cfg, top_k=top_k)
+        if apis:
+            suggestions.append({
+                "level": "statement",
+                "java_expr": call_expr or f"{call.get('receiver','')}.{call.get('method','')}()",
+                "apis": [_simple_api(a) for a in apis[:top_k]],
+                "query": query,
+            })
+            continue
+
+        # L3: block-level (whole block, generated once per block)
+        block = layered_search(searcher, java_code, cfg, module=module, top_k=top_k)
+        suggestions.append({
+            "level": "function",
+            "java_expr": java_code.strip()[:80],
+            "block": True,
+            **{k: block[k] for k in ("java_types", "type_candidates", "levels", "best_level", "best_hit", "suggested")},
+        })
+
+    # If no call could be resolved individually, produce one block-level suggest
+    # (L3 fallback) so the caller always gets something actionable.
+    if not suggestions:
+        block = layered_search(searcher, java_code, cfg, module=module, top_k=top_k)
+        suggestions.append({
+            "level": "function",
+            "java_expr": java_code.strip()[:80],
+            "block": True,
+            **{k: block[k] for k in ("java_types", "type_candidates", "levels", "best_level", "best_hit", "suggested")},
+        })
+
+    return {
+        "java_code": java_code,
+        "java_types": extracted["types"],
+        "calls": calls,
+        "suggestions": suggestions,
+    }
+
+
+def _simple_api(a) -> Dict:
+    """Compact dict for a search hit (used in statement-level fallback)."""
+    return {
+        "name": a.name,
+        "kind": a.kind,
+        "module": a.module,
+        "signature": a.signature[:200],
+        "parent": a.parent,
     }

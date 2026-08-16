@@ -42,6 +42,7 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     cfg["llm"]["base_url"] = cfg["llm"].get("base_url") or env.get("OPENAI_BASE_URL", "")
     cfg["llm"]["api_key"] = cfg["llm"].get("api_key") or env.get("OPENAI_API_KEY", "")
     cfg["llm"]["model"] = cfg["llm"].get("model") or env.get("OPENAI_MODEL", "")
+    cfg["llm"].setdefault("rerank", True)
 
     cfg.setdefault("corpus", {})
     cfg.setdefault("output", {"data_dir": "data"})

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.request
 from typing import Dict, List, Optional
 
@@ -154,7 +155,9 @@ def _call_llm_nl(cfg: Dict, java_code: str, level: str) -> Optional[Dict[str, st
             data = json.loads(resp.read().decode("utf-8"))
         content = (data["choices"][0]["message"].get("content") or "").strip()
     except Exception as exc:
-        print(f"  [nl_generator] LLM call failed: {exc}")
+        # stderr, not stdout: resolve_java_code / describe_java_code run inside
+        # the MCP server, where stdout is the JSON-RPC protocol channel.
+        print(f"  [nl_generator] LLM call failed: {exc}", file=sys.stderr)
         return None
     if not content:
         return None

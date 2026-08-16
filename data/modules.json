@@ -8,7 +8,7 @@
   "std.ast": {
     "library": "std",
     "module_dir": "ast",
-    "apis": 689,
+    "apis": 1028,
     "examples": 6
   },
   "std.binary": {
@@ -20,7 +20,7 @@
   "std.collection": {
     "library": "std",
     "module_dir": "collection",
-    "apis": 310,
+    "apis": 352,
     "examples": 16
   },
   "std.collection_concurrent": {
@@ -44,7 +44,7 @@
   "std.core": {
     "library": "std",
     "module_dir": "core",
-    "apis": 330,
+    "apis": 354,
     "examples": 2
   },
   "std.crypto": {
@@ -77,10 +77,16 @@
     "apis": 98,
     "examples": 4
   },
+  "std.interop": {
+    "library": "std",
+    "module_dir": "interop",
+    "apis": 12,
+    "examples": 0
+  },
   "std.io": {
     "library": "std",
     "module_dir": "io",
-    "apis": 98,
+    "apis": 97,
     "examples": 7
   },
   "std.math": {
@@ -98,7 +104,7 @@
   "std.net": {
     "library": "std",
     "module_dir": "net",
-    "apis": 302,
+    "apis": 306,
     "examples": 5
   },
   "std.objectpool": {
@@ -117,12 +123,12 @@
     "library": "std",
     "module_dir": "posix",
     "apis": 0,
-    "examples": 4
+    "examples": 3
   },
   "std.process": {
     "library": "std",
     "module_dir": "process",
-    "apis": 23,
+    "apis": 22,
     "examples": 2
   },
   "std.random": {
@@ -140,7 +146,7 @@
   "std.reflect": {
     "library": "std",
     "module_dir": "reflect",
-    "apis": 196,
+    "apis": 237,
     "examples": 3
   },
   "std.regex": {
@@ -152,8 +158,8 @@
   "std.runtime": {
     "library": "std",
     "module_dir": "runtime",
-    "apis": 15,
-    "examples": 0
+    "apis": 22,
+    "examples": 3
   },
   "std.sort": {
     "library": "std",
@@ -182,14 +188,14 @@
   "std.unittest": {
     "library": "std",
     "module_dir": "unittest",
-    "apis": 175,
+    "apis": 299,
     "examples": 6
   },
   "std.unittest_common": {
     "library": "std",
     "module_dir": "unittest_common",
-    "apis": 50,
-    "examples": 0
+    "apis": 51,
+    "examples": 1
   },
   "std.unittest_diff": {
     "library": "std",
@@ -200,7 +206,7 @@
   "std.unittest_mock": {
     "library": "std",
     "module_dir": "unittest_mock",
-    "apis": 94,
+    "apis": 95,
     "examples": 4
   },
   "std.unittest_mock_mockmacro": {
@@ -212,13 +218,19 @@
   "std.unittest_prop_test": {
     "library": "std",
     "module_dir": "unittest_prop_test",
-    "apis": 62,
+    "apis": 109,
     "examples": 0
   },
   "std.unittest_testmacro": {
     "library": "std",
     "module_dir": "unittest_testmacro",
     "apis": 0,
+    "examples": 0
+  },
+  "stdx.actors": {
+    "library": "stdx",
+    "module_dir": "actors",
+    "apis": 6,
     "examples": 0
   },
   "stdx.aspectCJ": {
@@ -230,14 +242,20 @@
   "stdx.compress": {
     "library": "stdx",
     "module_dir": "compress",
-    "apis": 0,
-    "examples": 2
+    "apis": 7,
+    "examples": 3
   },
   "stdx.crypto": {
     "library": "stdx",
     "module_dir": "crypto",
     "apis": 0,
     "examples": 5
+  },
+  "stdx.effect": {
+    "library": "stdx",
+    "module_dir": "effect",
+    "apis": 6,
+    "examples": 1
   },
   "stdx.encoding": {
     "library": "stdx",
@@ -267,13 +285,19 @@
     "library": "stdx",
     "module_dir": "net",
     "apis": 0,
-    "examples": 10
+    "examples": 11
   },
   "stdx.serialization": {
     "library": "stdx",
     "module_dir": "serialization",
     "apis": 36,
     "examples": 2
+  },
+  "stdx.string_intern": {
+    "library": "stdx",
+    "module_dir": "string_intern",
+    "apis": 4,
+    "examples": 1
   },
   "stdx.unittest": {
     "library": "stdx",
